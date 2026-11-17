@@ -1,0 +1,13 @@
+{
+  "name": "bar-and-track",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal calisthenics + running training app (offline-first PWA with Google Drive sync).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "serve": "npx --yes http-server -c-1 -p 8080 .",
+    "bump": "node scripts/bump-version.mjs"
+  },
+  "license": "MIT"
+}
