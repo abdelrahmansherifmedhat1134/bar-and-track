@@ -11,6 +11,10 @@ A personal calisthenics + running training app. Installable on phone and laptop,
 - **Progression**: double progression with dip-belt loading; reps-in-reserve after each main set holds or speeds up weight jumps; harder variants suggested automatically.
 - **Readiness check** (sleep, energy, soreness, stress + shoulder/knee flags) adjusts the session before you start.
 - **Logging**: live set-by-set with rest timer, one-tap "done as planned", or "fill in later".
+- **Focus view**: one set at a time with an animated demo and numbered steps, a big Done button, a rest countdown with "next up", and auto-advance. List view is one tap away.
+- **Warm-ups**: a timed general warm-up opens every session; loaded main lifts get ramp-up sets (kept out of progress stats).
+- **Guided test day**: warm-up, one all-out set per test with 3.5-minute rests, and a stopwatch for the run test; results save themselves.
+- **Hold timers and spoken cues**: holds count down and record the time; optional voice announces sets, rest and run phases.
 - **Running**: 15-level run-walk ladder with an interval timer, GPS distance/pace/splits/route, free runs.
 - **Fitness–fatigue model** (Banister, 42 d / 7 d) with early-deload suggestions when fatigue builds and strength drops.
 - **Rep counter (beta)** from the phone's accelerometer.

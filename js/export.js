@@ -11,7 +11,10 @@ export function buildCSV(model) {
     const d = dayKey(s.date), bw = model.bwAt(s.date), rd = s.ready && s.ready.score ? s.ready.score.toFixed(1) : '';
     const rpe = (s.post && s.post.rpe) || '', notes = (s.post && s.post.notes) || '';
     const mode = s.pending ? 'pending' : s.mode;
-    for (const it of s.items || []) (it.sets || []).forEach((z, j) => rows.push([d, s.title, mode, it.sec, EX[it.x] ? EX[it.x].n : it.x, j + 1, z.r, z.kg || 0, z.rir ?? '', bw, rd, rpe, '', notes]));
+    for (const it of s.items || []) {
+      (it.warm || []).forEach((z, j) => rows.push([d, s.title, mode, 'warm-up', EX[it.x] ? EX[it.x].n : it.x, 'W' + (j + 1), z.r, z.kg || 0, '', bw, rd, rpe, '', notes]));
+      (it.sets || []).forEach((z, j) => rows.push([d, s.title, mode, it.sec, EX[it.x] ? EX[it.x].n : it.x, j + 1, z.r, z.kg || 0, z.rir ?? '', bw, rd, rpe, '', notes]));
+    }
     if (s.run) {
       const lbl = s.run.alt === 'run' ? `Run-walk level ${(+s.run.lvl || 0) + 1}` : RUN_ALTS[s.run.alt] || 'Run';
       rows.push([d, s.title, mode, 'run', lbl, '', s.run.completed || '', '', '', bw, rd, s.run.effort || rpe, s.run.gps && s.run.gps.km ? s.run.gps.km.toFixed(2) : '', notes]);

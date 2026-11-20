@@ -4,6 +4,7 @@ import { esc, fmtDur, fmtMin, fmtDate, fmtShort, fmtPace, fmtAgo, dayKey, fromKe
 import { barChart, lineChart, heatmap, routeSVG } from './charts.js';
 import { readyZone } from './program.js';
 import * as drive from './drive.js';
+import { prefs, canSpeak } from './sensors.js';
 
 const CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>';
 const unitWord = (x) => (EX[x].k === 'hold' ? 's' : 'reps');
@@ -17,7 +18,10 @@ function statusChip(st) {
     : st === 'grind' ? '<span class="chip warn">Hold weight</span>' : st === 'new' ? '<span class="chip">First time</span>' : '';
 }
 function chips(act, val, n, labels, extra = '') { return `<div class="chips" style="--n:${n}" role="group">${Array.from({ length: n }, (_, k) => { const v = labels ? labels[k][0] : k + 1; const on = String(val) === String(v); return `<button type="button" class="${on ? 'on' : ''}" data-act="${act}" data-v="${v}" aria-pressed="${on}"${extra}>${labels ? esc(labels[k][1]) : k + 1}</button>`; }).join('')}</div>`; }
-const howHTML = (x, open = false) => `<details class="how" data-key="how-${x}"${open ? ' open' : ''}><summary>How to do it</summary><ul>${EX[x].cues.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>${EX[x].knee ? '<p class="small muted">Knee: no pivoting or jumping. Stop at any instability.</p>' : ''}<a class="demo" href="${demoUrl(x)}" target="_blank" rel="noopener">Watch demo videos ↗</a></details>`;
+export const demoHTML = (x, cls = '') => `<div class="demo ${cls}" data-ex="${x}" aria-hidden="true"></div>`;
+const cuesHTML = (x) => `<ol class="cues">${EX[x].cues.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>${EX[x].knee ? '<p class="small muted">Knee: no pivoting or jumping. Stop at any instability.</p>' : ''}`;
+const videoLink = (x) => `<a class="demolink" href="${demoUrl(x)}" target="_blank" rel="noopener">More demo videos ↗</a>`;
+const howHTML = (x, open = false) => `<details class="how" data-key="how-${x}"${open ? ' open' : ''}><summary>How to do it</summary><div class="howbody">${demoHTML(x)}<div>${cuesHTML(x)}${videoLink(x)}</div></div></details>`;
 function noteHTML(n, M) {
   const btn = n.btn ? `<div class="row"><button class="btn sm" data-act="${n.btn[1]}" data-id="${esc(n.btn[2])}">${esc(n.btn[0])}</button></div>` : '';
   const weigh = n.weigh ? `<div class="row"><div class="inl" style="width:130px"><input id="wIn" class="num" type="number" step="0.1" min="30" max="200" inputmode="decimal" aria-label="Bodyweight in kg" placeholder="${M.bwAt(Date.now())}"><em>kg</em></div><button class="btn sm" data-act="weigh">Save</button></div>` : '';
@@ -29,7 +33,7 @@ function sessSummary(s) {
   if (s.kind === 'test' && s.test) { const t = TESTS.map(([k, l]) => (s.test[k] ? `${l} ${s.test[k]}` : '')).filter(Boolean).join(' · '); if (t) bits.push(t); if (s.test.runMin) bits.push(`ran ${s.test.runMin} min`); }
   const sets = (s.items || []).filter((i) => i.sec === 'main').reduce((a, i) => a + (i.sets || []).filter((z) => +z.r > 0).length, 0);
   if (sets) bits.push(`${sets} working sets`);
-  if (s.run) { const g = s.run.gps; bits.push((s.run.alt === 'run' ? `run-walk L${(+s.run.lvl || 0) + 1}` : RUN_ALTS[s.run.alt].toLowerCase()) + (s.run.completed === 'part' ? ' (part)' : s.run.completed === 'no' ? ' (skipped)' : '') + (g && g.km ? ` ${g.km.toFixed(2)} km` : '')); }
+  if (s.run) { const g = s.run.gps; bits.push((s.run.alt === 'run' ? `run-walk L${(+s.run.lvl || 0) + 1}` : (RUN_ALTS[s.run.alt] || 'Run').toLowerCase()) + (s.run.completed === 'part' ? ' (part)' : s.run.completed === 'no' ? ' (skipped)' : '') + (g && g.km ? ` ${g.km.toFixed(2)} km` : '')); }
   if (s.dur) bits.push(fmtMin(s.dur));
   return bits.join(' · ');
 }
@@ -124,51 +128,144 @@ export function viewStart(M, ui) {
 
 export function viewTest(M, ui) {
   const f = ui.testForm; const t = M.lastTest();
+  const steps = [['genwarm', 'General warm-up, 3 minutes'], ['passthru', 'Pass-throughs, Y-T-W raises, scapular pull-ups'], ['pullup', 'One all-out set each: pull-ups, dips, push-ups, inverted rows, 3–4 min rest between'], ['runtest', 'The run: easy talking pace until you would need to walk, max 20 min']];
   return `<section class="card hero test"><div class="eyebrow">Test day</div><h2>Find your current numbers</h2><p class="small">${esc(TPL.T.why)}</p>
-    <ol class="small steps"><li>Warm up 8 minutes: pass-throughs, Y-T-W raises, scapular pull-ups, 10 easy push-ups, a few easy pull-ups.</li><li>One all-out set of each, in this order, resting 3–4 minutes between. Count only clean reps.</li><li>Finish with the run: easy talking pace on the track; stop when you would need to walk or at 20 minutes.</li></ol></section>
-  <section class="card"><div class="grid2">${TESTS.map(([k, l, h]) => `<label class="f" for="t-${k}">${l}${t && t[k] ? ` <span class="muted">(last ${t[k]})</span>` : ''}<input class="num" type="number" inputmode="numeric" min="0" max="200" id="t-${k}" value="${esc(f[k])}" data-in="test" data-f="${k}"><span class="hint">${h}</span></label>`).join('')}
+    <ol class="small steps">${steps.map(([, l]) => `<li>${esc(l)}</li>`).join('')}</ol>
+    <button class="btn primary wide" data-act="golive">Start guided test</button>
+    <p class="small muted">Guided: each warm-up and test with its demo, a rest countdown between tests and a stopwatch for the run. Results save automatically when you finish.</p></section>
+  <details class="card g" data-key="testmanual"><summary>Already did it? Enter results manually</summary><div class="stack" style="margin-top:10px"><div class="grid2">${TESTS.map(([k, l, h]) => `<label class="f" for="t-${k}">${l}${t && t[k] ? ` <span class="muted">(last ${t[k]})</span>` : ''}<input class="num" type="number" inputmode="numeric" min="0" max="200" id="t-${k}" value="${esc(f[k])}" data-in="test" data-f="${k}"><span class="hint">${h}</span></label>`).join('')}
     <label class="f" for="t-runMin">Continuous easy run (min)<input class="num" type="number" inputmode="decimal" min="0" max="120" id="t-runMin" value="${esc(f.runMin)}" data-in="test" data-f="runMin"></label>
     <label class="f" for="t-bw">Bodyweight (kg)<input class="num" type="number" step="0.1" min="30" max="200" inputmode="decimal" id="t-bw" value="${esc(f.bw)}" data-in="test" data-f="bw"></label>
     <label class="f" for="t-date">Date<input type="date" id="t-date" value="${esc(f.date)}" max="${dayKey(Date.now())}" data-in="test" data-f="date"></label></div>
-    <button class="btn primary wide" data-act="savetest">Save test</button>
-    <p class="small muted">${M.programStart ? 'The program keeps its current week; the new maxes recalibrate your targets.' : 'Saving starts the program: week 1 (Re-entry) begins on the test date.'}</p></section>`;
+    <button class="btn wide" data-act="savetest">Save test</button></div></details>
+  <p class="small muted">${M.programStart ? 'The program keeps its current week; the new maxes recalibrate your targets.' : 'Saving starts the program: week 1 (Re-entry) begins on the test date.'}</p>`;
 }
 
 /* ===================== Live workout ===================== */
-export function viewWorkout(M, ui) {
-  const L = ui.live;
-  const blocks = L.items.map((it, i) => {
-    const e = EX[it.x]; const showKg = loadable(it.x); const done = it.rows.length && it.rows.every((r) => r.done);
-    const rows = it.rows.map((r, j) => {
-      const askRir = r.done && it.sec === 'main' && ui.rirAsk && ui.rirAsk.i === i && ui.rirAsk.j === j;
-      return `<div class="setrow ${showKg ? '' : 'nokg'} ${r.done ? 'is-done' : ''}" id="row-${i}-${j}"><span class="sn">${j + 1}</span>
-      <div class="inl"><input class="num" type="number" inputmode="numeric" min="0" max="999" id="s-${i}-${j}" aria-label="Set ${j + 1} ${unitWord(it.x)}" placeholder="${it.targets[j] ?? it.targets[it.targets.length - 1]}" value="${esc(r.r)}" data-in="setr" data-i="${i}" data-j="${j}"><em>${e.k === 'hold' ? 's' : 'reps'}</em></div>
-      ${showKg ? `<div class="inl"><input class="num" type="number" inputmode="decimal" step="0.5" min="0" max="200" id="k-${i}-${j}" aria-label="Set ${j + 1} added kg" placeholder="${it.load || 0}" value="${esc(r.kg)}" data-in="setkg" data-i="${i}" data-j="${j}"><em>+kg</em></div>` : ''}
-      <button class="check ${r.done ? 'on' : ''}" aria-label="Set ${j + 1} done" aria-pressed="${r.done}" data-act="setdone" data-i="${i}" data-j="${j}">${CHECK}</button>
-      ${askRir ? `<div class="rirask"><span class="small">Reps left in the tank?</span>${chips('rir', r.rir, 5, [['0', '0'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4+']], ` data-i="${i}" data-j="${j}"`)}</div>` : r.done && r.rir != null && r.rir !== '' && it.sec === 'main' ? `<button class="rirtag" data-act="riredit" data-i="${i}" data-j="${j}">${r.rir} left</button>` : ''}</div>`;
-    }).join('');
-    const alts = (e.alt || []).filter((a) => EX[a]);
-    return `<div class="ex ${it.sec === 'prep' ? 'prep' : ''} ${done ? 'done' : ''}" id="ex-${i}"><div class="spread"><div><div class="eyebrow">${it.sec === 'prep' ? 'Prep' : 'Main'}${e.each ? ' · each side' : ''}</div><h3>${esc(e.n)}</h3><div class="small muted num">Target ${itemLine(it)}${it.sec === 'main' ? ` · stop with ${it.rir} in reserve` : ''}</div></div>${statusChip(it.status)}</div>
-      ${howHTML(it.x)}<div class="stack">${rows}</div>
-      <div class="row"><button class="btn sm" data-act="addset" data-i="${i}">+ Set</button><button class="btn sm ghost" data-act="delrow" data-i="${i}">− Set</button>${e.k === 'reps' ? `<button class="btn sm ghost" data-act="repcount" data-i="${i}">Count reps (beta)</button>` : ''}${alts.length ? `<select class="sm" id="swap-${i}" data-ch="swap" data-i="${i}" aria-label="Swap exercise"><option value="">Swap…</option>${alts.map((a) => `<option value="${a}">${esc(EX[a].n)}</option>`).join('')}</select>` : ''}</div></div>`;
-  }).join('');
-  const R = L.run;
-  let runBlock = '';
-  if (R) {
-    const g = R.gps;
-    runBlock = `<div class="ex" id="runblock"><div class="eyebrow">${R.alt === 'free' ? 'Free run' : R.full ? 'Main run' : 'Finisher'}${R.alt === 'run' ? ` · level ${R.lvl + 1}` : ''}</div><h3>${R.alt === 'walk' ? 'Brisk walk' : R.alt === 'free' ? 'Run' : 'Run-walk'}</h3>
+/** Every set of the session in order (warm-up sets first within an exercise), then the run. */
+export function stepsOf(L) {
+  const out = [];
+  L.items.forEach((it, i) => { (it.wrows || []).forEach((_, j) => out.push({ i, j, w: true })); it.rows.forEach((_, j) => out.push({ i, j, w: false })); });
+  if (L.run) out.push({ run: true });
+  return out;
+}
+export const rowAt = (L, st) => (st && !st.run ? (st.w ? L.items[st.i].wrows[st.j] : L.items[st.i].rows[st.j]) : null);
+/** The step on screen: the one picked with Prev/Next, else the first set not done yet. */
+export function curStep(L) {
+  const S = stepsOf(L);
+  if (L.cur != null && L.cur >= 0 && L.cur < S.length) return { S, k: L.cur };
+  let k = S.findIndex((st) => !st.run && !rowAt(L, st).done);
+  if (k < 0) k = L.run ? S.length - 1 : S.length;
+  return { S, k };
+}
+export function targetOf(it, j, w) {
+  if (w) return it.wrows[j].t;
+  return it.targets[j] ?? it.targets[it.targets.length - 1];
+}
+/** "Pull-ups · set 2 of 4 · 8 reps @ +5 kg" for announcements and the rest screen. */
+export function stepLabel(L, st, long = true) {
+  if (!st) return 'Finish';
+  if (st.run) return L.run.alt === 'test' ? 'Run test' : L.run.alt === 'walk' ? 'Brisk walk' : 'Run';
+  const it = L.items[st.i], e = EX[it.x], t = targetOf(it, st.j, st.w);
+  const kg = st.w ? it.wrows[st.j].l : it.load;
+  const which = st.w ? 'warm-up set' : it.sec === 'test' ? 'all-out set' : `set ${st.j + 1} of ${it.rows.length}`;
+  const what = it.sec === 'test' ? '' : e.timer ? ` · ${fmtDur(t)}` : ` · ${t} ${e.k === 'hold' ? 'seconds' : 'reps'}${e.each ? ' each side' : ''}${kg > 0 ? ` with ${kg} kilos` : ''}`;
+  return long ? `${e.n}, ${which}${what}` : `${e.n} · ${which}`;
+}
+const holdBtn = (it, i, j, w) => (EX[it.x].k === 'hold' ? `<button class="btn sm holdgo" data-act="holdgo" data-i="${i}" data-j="${j}"${w ? ' data-w="1"' : ''}>Start ${fmtDur(targetOf(it, j, w))} timer</button>` : '');
+function setRowHTML(ui, it, i, j, w) {
+  const e = EX[it.x], r = w ? it.wrows[j] : it.rows[j], showKg = loadable(it.x) && it.sec !== 'test', W = w ? ' data-w="1"' : '', id = `${w ? 'w' : ''}${i}-${j}`;
+  const nW = (it.wrows || []).length;
+  const askRir = !w && r.done && it.sec === 'main' && ui.rirAsk && ui.rirAsk.i === i && ui.rirAsk.j === j;
+  const ph = it.sec === 'test' ? 'max' : targetOf(it, j, w);
+  return `<div class="setrow ${showKg ? '' : 'nokg'} ${r.done ? 'is-done' : ''} ${w ? 'warm' : ''}" id="row-${id}"><span class="sn">${w ? 'W' : j + 1}</span>
+      <div class="inl"><input class="num" type="number" inputmode="numeric" min="0" max="999" id="s-${id}" aria-label="${w ? 'Warm-up set' : `Set ${j + 1}`} ${unitWord(it.x)}" placeholder="${ph}" value="${esc(r.r)}" data-in="setr" data-i="${i}" data-j="${j}"${W}><em>${e.k === 'hold' ? 's' : 'reps'}</em></div>
+      ${showKg ? `<div class="inl"><input class="num" type="number" inputmode="decimal" step="0.5" min="0" max="200" id="k-${id}" aria-label="${w ? 'Warm-up set' : `Set ${j + 1}`} added kg" placeholder="${w ? r.l : it.load || 0}" value="${esc(r.kg)}" data-in="setkg" data-i="${i}" data-j="${j}"${W}><em>+kg</em></div>` : ''}
+      <button class="check ${r.done ? 'on' : ''}" aria-label="${w ? 'Warm-up set' : `Set ${j + 1}`} done" aria-pressed="${r.done}" data-act="setdone" data-i="${i}" data-j="${j}"${W}>${CHECK}</button>
+      ${askRir ? `<div class="rirask"><span class="small">Reps left in the tank?</span>${chips('rir', r.rir, 5, [['0', '0'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4+']], ` data-i="${i}" data-j="${j}"`)}</div>` : !w && r.done && r.rir != null && r.rir !== '' && it.sec === 'main' ? `<button class="rirtag" data-act="riredit" data-i="${i}" data-j="${j}">${r.rir} left</button>` : ''}</div>${w && j === nW - 1 ? '<div class="small muted warmnote">Warm-up sets are not counted in your progress.</div>' : ''}`;
+}
+function runBlockHTML(L) {
+  const R = L.run; if (!R) return '';
+  const g = R.gps, test = R.alt === 'test';
+  return `<div class="ex" id="runblock"><div class="eyebrow">${test ? 'Test · last item' : R.alt === 'free' ? 'Free run' : R.full ? 'Main run' : 'Finisher'}${R.alt === 'run' ? ` · level ${R.lvl + 1}` : ''}</div><h3>${test ? 'Continuous easy run' : R.alt === 'walk' ? 'Brisk walk' : R.alt === 'free' ? 'Run' : 'Run-walk'}</h3>
       ${R.desc ? `<p class="small muted">${esc(R.desc)}. Easy pace: you can talk in full sentences.${R.why ? ' ' + esc(R.why) : ''}</p>` : ''}
       <label class="toggle ${R.gpsOn ? 'on' : ''}"><input type="checkbox" id="gpsOn" data-ch="gpson" ${R.gpsOn ? 'checked' : ''}> Track distance with GPS</label>
       ${g && g.km ? `<p class="small num">${g.km.toFixed(2)} km${g.pace ? ` · ${fmtPace(g.pace)} /km` : ''}</p>` : ''}
-      <a class="btn runbtn" href="#timer" data-act="runtimer">${L.timer ? 'Open run timer' : R.alt === 'free' ? 'Start run' : 'Start run timer'}</a>
-      ${R.alt !== 'free' ? `<span class="lbl">Did you finish it?</span>${chips('runcomp', R.completed, 3, [['yes', 'All of it'], ['part', 'Part'], ['no', 'Skipped']])}` : ''}
+      ${R.secs && (test || R.alt === 'free') && !L.timer ? `<p class="num"><b>${fmtDur(R.secs)}</b> <span class="small muted">recorded</span></p>` : ''}
+      <a class="btn runbtn" href="#timer" data-act="runtimer">${L.timer ? 'Open run timer' : test ? (R.secs ? 'Run again' : 'Start the stopwatch') : R.alt === 'free' ? 'Start run' : 'Start run timer'}</a>
+      ${test ? '<p class="small muted">Tap Finish run on the timer the moment you need to walk; the time is recorded as your result.</p>' : ''}
+      ${R.alt !== 'free' && !test ? `<span class="lbl">Did you finish it?</span>${chips('runcomp', R.completed, 3, [['yes', 'All of it'], ['part', 'Part'], ['no', 'Skipped']])}` : ''}
       <span class="lbl">How hard was the run? (1–10)</span>${chips('runeff', R.effort, 10)}</div>`;
+}
+const modeSeg = () => `<div class="seg" role="group" aria-label="Workout view"><button class="${prefs.focus ? 'on' : ''}" data-act="wmode" data-v="1" aria-pressed="${prefs.focus}">Focus</button><button class="${prefs.focus ? '' : 'on'}" data-act="wmode" data-v="0" aria-pressed="${!prefs.focus}">List</button></div>`;
+const liveHead = (L) => `<div class="sticky-head"><div><div class="eyebrow">${esc(L.phaseName || '')}${L.short ? ' · short' : ''}</div><h2>${esc(L.title)}</h2></div><div class="row nowrap"><div class="tile clock"><b data-elapsed class="num">${fmtDur((Date.now() - L.start) / 1000)}</b><span>Elapsed</span></div></div></div>`;
+const bwCard = (L) => (L.kind === 'test' ? `<section class="card"><label class="f" for="liveBw">Bodyweight today (kg) <span class="muted">optional</span><input class="num" type="number" step="0.1" min="30" max="200" inputmode="decimal" id="liveBw" value="${esc(L.bw ?? '')}" data-in="livebw"></label></section>` : '');
+const endCard = (L) => `<section class="card"><div class="grid2"><button class="btn danger" data-act="wdiscard">Discard</button><button class="btn primary" data-act="wfinish">${L.kind === 'test' ? 'Finish &amp; save results' : 'Finish &amp; check in'}</button></div>
+  <p class="small muted">${L.kind === 'test' ? 'Each test you complete is saved; skipped ones are left out.' : 'Only ticked sets are saved. An empty box counts as the target.'}</p></section>`;
+
+/* ----- Focus: one set at a time ----- */
+function viewFocus(M, ui) {
+  const L = ui.live; const { S, k } = curStep(L); const st = S[k];
+  const rest = ui.restLeft();
+  let body;
+  if (rest > 0 && !(L.cur != null)) {
+    const nx = S[curStep({ ...L, cur: null }).k];
+    const ask = ui.rirAsk && L.items[ui.rirAsk.i] ? L.items[ui.rirAsk.i].rows[ui.rirAsk.j] : null;
+    body = `<section class="card restcard" aria-live="polite"><div class="eyebrow">Rest</div><div class="big num" id="focusRest">${fmtDur(Math.ceil(rest))}</div>
+      <div class="row center"><button class="btn sm" data-act="rest" data-v="-15">−15 s</button><button class="btn sm" data-act="rest" data-v="30">+30 s</button><button class="btn sm primary" data-act="rest" data-v="skip">Skip rest</button></div>
+      ${ask ? `<div class="rirask"><span class="small">That set: reps left in the tank?</span>${chips('rir', ask.rir, 5, [['0', '0'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4+']], ` data-i="${ui.rirAsk.i}" data-j="${ui.rirAsk.j}"`)}</div>` : ''}
+      <div class="nextup"><span class="eyebrow">Next up</span>${nx && !nx.run ? `<div class="nextrow">${demoHTML(L.items[nx.i].x, 'mini')}<div><b>${esc(stepLabel(L, nx, false))}</b><div class="small muted num">${esc(stepLabel(L, nx).split(' · ').slice(1).join(' · ') || '')}</div></div></div>` : `<b>${esc(stepLabel(L, nx))}</b>`}</div></section>`;
+  } else if (!st) {
+    body = `<section class="card center"><h3>Everything is ticked</h3><p class="small muted">Finish to save the session.</p></section>`;
+  } else if (st.run) {
+    body = runBlockHTML(L);
+  } else {
+    const it = L.items[st.i], e = EX[it.x], r = rowAt(L, st), i = st.i, j = st.j, W = st.w ? ' data-w="1"' : '';
+    const nItems = L.items.length, test = it.sec === 'test';
+    const showKg = loadable(it.x) && !test;
+    const tgt = targetOf(it, j, st.w), kg = st.w ? r.l : it.load;
+    const tline = test ? `One all-out set. Count clean reps only.${it.last ? ` Last test: ${it.last}.` : ''}` : e.timer ? `${fmtDur(tgt)} easy` : `${tgt}${e.k === 'hold' ? ' s' : ' reps'}${e.each ? ' each side' : ''}${kg > 0 ? ` @ +${kg} kg` : ''}${!st.w && it.sec === 'main' ? ` · stop with ${it.rir} in reserve` : ''}`;
+    const setTxt = st.w ? `Warm-up set ${j + 1} of ${it.wrows.length}` : test ? 'Max test' : `Set ${j + 1} of ${it.rows.length}`;
+    const alts = (e.alt || []).filter((a) => EX[a]);
+    body = `<section class="card focus ${st.w ? 'is-warm' : ''}" id="focusCard">
+      <div class="spread"><div class="eyebrow">Exercise ${i + 1} of ${nItems} · ${it.sec === 'prep' ? 'Warm-up & prep' : test ? 'Test' : 'Main'}</div>${statusChip(it.status)}</div>
+      <h2>${esc(e.n)}</h2>
+      <div class="setline"><span class="pill2 ${st.w ? 'warm' : ''}">${setTxt}</span><span class="num tgt">${esc(tline)}</span></div>
+      ${demoHTML(it.x, 'big')}
+      ${st.w ? '<p class="small muted">Warm-up set: easy and crisp, not counted in your progress.</p>' : ''}
+      <div class="focusin ${showKg ? '' : 'nokg'}">
+        <label class="inl big"><input class="num" type="number" inputmode="numeric" min="0" max="999" id="fs-${st.w ? 'w' : ''}${i}-${j}" aria-label="${unitWord(it.x)} done" placeholder="${test ? '0' : tgt}" value="${esc(r.r)}" data-in="setr" data-i="${i}" data-j="${j}"${W}><em>${e.k === 'hold' ? 's' : 'reps'}</em></label>
+        ${showKg ? `<label class="inl big"><input class="num" type="number" inputmode="decimal" step="0.5" min="0" max="200" id="fk-${st.w ? 'w' : ''}${i}-${j}" aria-label="added kg" placeholder="${kg || 0}" value="${esc(r.kg)}" data-in="setkg" data-i="${i}" data-j="${j}"${W}><em>+kg</em></label>` : ''}
+      </div>
+      ${e.k === 'hold' ? `<button class="btn wide holdgo big" data-act="holdgo" data-i="${i}" data-j="${j}"${W}>▶ Start ${fmtDur(tgt)} timer</button>` : ''}
+      <button class="btn primary wide done big" data-act="setdone" data-i="${i}" data-j="${j}"${W}>${r.done ? 'Done ✓ (tap to undo)' : e.k === 'hold' ? 'Done without timer' : 'Done'}</button>
+      <div class="grid2 fnav"><button class="btn sm" data-act="fnav" data-v="-1" ${k === 0 ? 'disabled' : ''}>‹ Previous</button><button class="btn sm" data-act="fnav" data-v="1" ${k >= S.length - 1 ? 'disabled' : ''}>Next ›</button></div>
+      <details class="how" data-key="fhow-${it.x}" open><summary>How to do it</summary>${cuesHTML(it.x)}${videoLink(it.x)}</details>
+      <div class="row">${!st.w ? `<button class="btn sm ghost" data-act="addset" data-i="${i}">+ Set</button>` : ''}${e.k === 'reps' ? `<button class="btn sm ghost" data-act="repcount" data-i="${i}">Count reps (beta)</button>` : ''}${alts.length && !test ? `<select class="sm" id="fswap-${i}" data-ch="swap" data-i="${i}" aria-label="Swap exercise"><option value="">Swap…</option>${alts.map((a) => `<option value="${a}">${esc(EX[a].n)}</option>`).join('')}</select>` : ''}</div>
+    </section>`;
   }
-  return `<div class="sticky-head"><div><div class="eyebrow">${esc(L.phaseName || '')}${L.short ? ' · short' : ''}</div><h2>${esc(L.title)}</h2></div><div class="tile clock"><b data-elapsed class="num">${fmtDur((Date.now() - L.start) / 1000)}</b><span>Elapsed</span></div></div>
-  ${blocks}${runBlock}
-  ${L.items.length || (R && R.alt !== 'free') ? `<section class="card"><label class="f" for="addex">Add exercise<select id="addex" data-ch="addex"><option value="">Choose…</option>${Object.keys(EX).filter((x) => !EX[x].prep).map((x) => `<option value="${x}">${esc(EX[x].n)}</option>`).join('')}</select></label></section>` : ''}
-  <section class="card"><div class="grid2"><button class="btn danger" data-act="wdiscard">Discard</button><button class="btn primary" data-act="wfinish">Finish &amp; check in</button></div>
-  <p class="small muted">Only ticked sets are saved. An empty box counts as the target.</p></section>`;
+  const doneN = S.filter((x) => !x.run && rowAt(L, x).done).length, setN = S.filter((x) => !x.run).length;
+  const strip = `<div class="progstrip" aria-label="${doneN} of ${setN} sets done"><div class="prog"><i style="width:${setN ? ((doneN / setN) * 100).toFixed(1) : 0}%"></i></div><span class="small muted num nowrap">${doneN}/${setN} sets</span>${modeSeg()}</div>`;
+  return `${liveHead(L)}${strip}${body}${k === S.length - 1 || !st ? bwCard(L) : ''}${endCard(L)}`;
+}
+
+export function viewWorkout(M, ui) {
+  const L = ui.live;
+  if (prefs.focus && L.items.length) return viewFocus(M, ui);
+  const blocks = L.items.map((it, i) => {
+    const e = EX[it.x]; const done = it.rows.length && it.rows.every((r) => r.done);
+    const rows = (it.wrows || []).map((_, j) => setRowHTML(ui, it, i, j, true)).join('') + it.rows.map((_, j) => setRowHTML(ui, it, i, j, false)).join('');
+    const holds = e.k === 'hold' ? `<div class="row">${it.rows.map((r, j) => (r.done ? '' : holdBtn(it, i, j, false))).filter(Boolean).slice(0, 1).join('')}</div>` : '';
+    const alts = (e.alt || []).filter((a) => EX[a]); const test = it.sec === 'test';
+    return `<div class="ex ${it.sec === 'prep' ? 'prep' : ''} ${done ? 'done' : ''}" id="ex-${i}"><div class="spread"><div><div class="eyebrow">${it.sec === 'prep' ? 'Warm-up & prep' : test ? 'Test' : 'Main'}${e.each ? ' · each side' : ''}</div><h3>${esc(e.n)}</h3><div class="small muted num">${test ? `One all-out set${it.last ? ` · last ${it.last}` : ''}` : `Target ${itemLine(it)}${it.sec === 'main' ? ` · stop with ${it.rir} in reserve` : ''}`}</div></div>${statusChip(it.status)}</div>
+      ${howHTML(it.x)}<div class="stack">${rows}</div>${holds}
+      ${test ? '' : `<div class="row"><button class="btn sm" data-act="addset" data-i="${i}">+ Set</button><button class="btn sm ghost" data-act="delrow" data-i="${i}">− Set</button>${e.k === 'reps' ? `<button class="btn sm ghost" data-act="repcount" data-i="${i}">Count reps (beta)</button>` : ''}${alts.length ? `<select class="sm" id="swap-${i}" data-ch="swap" data-i="${i}" aria-label="Swap exercise"><option value="">Swap…</option>${alts.map((a) => `<option value="${a}">${esc(EX[a].n)}</option>`).join('')}</select>` : ''}</div>`}</div>`;
+  }).join('');
+  const R = L.run;
+  return `${liveHead(L)}${L.items.length ? `<div class="progstrip"><span class="small muted">Showing every exercise</span><span style="flex:1"></span>${modeSeg()}</div>` : ''}
+  ${blocks}${runBlockHTML(L)}${bwCard(L)}
+  ${L.kind !== 'test' && (L.items.length || (R && R.alt !== 'free')) ? `<section class="card"><label class="f" for="addex">Add exercise<select id="addex" data-ch="addex"><option value="">Choose…</option>${Object.keys(EX).filter((x) => !EX[x].prep).map((x) => `<option value="${x}">${esc(EX[x].n)}</option>`).join('')}</select></label></section>` : ''}
+  ${endCard(L)}`;
 }
 
 export function viewTimer(M, ui) {
@@ -224,7 +321,7 @@ export function viewEdit(M, ui) {
     <label class="f" for="ed-dur">Duration (min)<input class="num" type="number" min="0" max="600" id="ed-dur" value="${Math.round((s.dur || 0) / 60)}" data-in="ed-dur"></label></div>
     <p class="small muted">Each box is one set. Remove what you did not do; change what was different.</p></section>
   ${items}
-  ${R ? `<section class="card"><h3>${R.alt === 'run' ? `Run-walk · level ${(+R.lvl || 0) + 1}` : RUN_ALTS[R.alt]}</h3><span class="lbl">Finished?</span>${chips('ed-runcomp', R.completed, 3, [['yes', 'All'], ['part', 'Part'], ['no', 'Skipped']])}
+  ${R ? `<section class="card"><h3>${R.alt === 'run' ? `Run-walk · level ${(+R.lvl || 0) + 1}` : RUN_ALTS[R.alt] || 'Run'}</h3><span class="lbl">Finished?</span>${chips('ed-runcomp', R.completed, 3, [['yes', 'All'], ['part', 'Part'], ['no', 'Skipped']])}
     <span class="lbl">Run effort</span>${chips('ed-runeff', R.effort, 10)}</section>` : ''}
   <section class="card"><span class="lbl">Session effort</span>${chips('ed-rpe', (s.post || {}).rpe, 10)}
     <div class="grid2"><button class="btn" data-act="ed-cancel">Cancel</button><button class="btn primary" data-act="ed-save">Save</button></div></section>`;
@@ -286,6 +383,11 @@ export function viewPlan(M, ui) {
   return `<section class="card"><div class="eyebrow">Program</div><h2>${ph.key === 'test' ? 'Not started: do the test day' : `Week ${ph.week} · ${esc(ph.name)}`}</h2>
     <div class="stack small"><div><b>Weeks 1–2 Re-entry</b> <span class="muted">· 50% of tested max, 4 reps in reserve, one set fewer.</span></div><div><b>Weeks 3–4 Rebuild</b> <span class="muted">· 65%, 3 in reserve, full sets.</span></div><div><b>Then 6-week blocks</b> <span class="muted">· 5 build weeks (reps, then belt weight; reps-in-reserve speeds up or holds increases) + 1 deload with a re-test. The coach can call an early deload when fatigue builds up.</span></div></div>
     ${M.programStart ? '<button class="btn sm danger" data-act="restart">Restart from Re-entry (after a long break)</button>' : ''}</section>
+  <section class="card"><h3>During workouts</h3><div class="stack">
+    <label class="toggle ${prefs.focus ? 'on' : ''}"><input type="checkbox" id="prefFocus" data-ch="pref" data-k="focus" ${prefs.focus ? 'checked' : ''}> Focus view: one set at a time with demo, rest countdown and auto-advance</label>
+    <label class="toggle ${prefs.voice ? 'on' : ''}"><input type="checkbox" id="prefVoice" data-ch="pref" data-k="voice" ${prefs.voice ? 'checked' : ''} ${canSpeak() ? '' : 'disabled'}> Spoken cues: next exercise, rest over, hold countdown, run phases</label>
+    ${canSpeak() ? '<button class="btn sm ghost" data-act="voicetest">Test the voice</button>' : '<p class="small muted">This browser has no speech voice.</p>'}</div>
+    <p class="small muted">Saved on this device only.</p></section>
   <section class="card"><h3>Weekly schedule</h3><div class="stack">${sched}</div>
     ${warn.length ? warn.map((w) => `<div class="note warn"><span class="small">${esc(w)}</span></div>`).join('') : '<p class="small muted">Three strength days with a day between upper sessions, plus the optional run day.</p>'}
     <details class="how" data-key="why-split"><summary>Why this split</summary><ul>${PROGRAM_TPLS.map((k) => `<li><b>${esc(TPL[k].name)}:</b> ${esc(TPL[k].why)}</li>`).join('')}<li>Upper body twice a week (best for growth); legs once heavy plus running, which is kinder to the knee.</li><li>On a 3-day week, skip the run day: the upper days already end with a run-walk finisher.</li></ul></details></section>
@@ -345,4 +447,16 @@ export function repSheet(ui) {
     ${r.error ? `<p class="small warn">${esc(r.error)}</p>` : `<p class="small muted center">${r.on ? 'Counting… do your set.' : 'Phone in a tight pocket or armband, then tap Start.'}</p>`}
     <div class="grid3"><button class="btn" data-act="repminus" aria-label="One less">−</button><button class="btn ${r.on ? 'danger' : 'primary'}" data-act="reptoggle">${r.on ? 'Stop' : 'Start'}</button><button class="btn" data-act="repplus" aria-label="One more">+</button></div>
     <div class="grid2"><button class="btn ghost" data-act="repclose">Close</button><button class="btn primary" data-act="repuse" ${r.count ? '' : 'disabled'}>Use for next set</button></div></div>`;
+}
+
+export function holdSheet(ui) {
+  const h = ui.hold; if (!h || !ui.live) return '';
+  const it = ui.live.items[h.i]; if (!it) return '';
+  const left = Math.max(0, h.total - ui.holdElapsed());
+  return `<div class="sheet-backdrop"></div><div class="sheet" role="dialog" aria-modal="true" aria-label="Hold timer">
+    <div class="eyebrow">${esc(EX[it.x].n)}${h.w ? ' · warm-up' : ''}</div>
+    <div class="holdring"><span class="big num" id="holdTime">${fmtDur(Math.ceil(left))}</span><span class="small muted" id="holdSub">${h.lead > 0 ? 'Get set…' : `of ${fmtDur(h.total)}`}</span></div>
+    ${demoHTML(it.x, 'mini center')}
+    <div class="grid2"><button class="btn" data-act="holdcancel">Cancel</button><button class="btn primary" data-act="holdstop">Stop &amp; save time</button></div>
+    <p class="small muted center">The time is saved and the set ticked when the countdown ends.</p></div>`;
 }

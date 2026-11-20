@@ -86,3 +86,18 @@ export const motion = {
   stop() { if (this.handler) self.removeEventListener('devicemotion', this.handler); this.handler = null; this.on = false; },
   get count() { return this.det ? this.det.count : 0; }
 };
+
+/* ---------- spoken cues (optional) ---------- */
+const PREF = 'bt:prefs';
+export const prefs = (() => { try { return { focus: true, voice: false, ...JSON.parse(localStorage.getItem(PREF) || '{}') }; } catch { return { focus: true, voice: false }; } })();
+export function setPref(k, v) { prefs[k] = v; try { localStorage.setItem(PREF, JSON.stringify(prefs)); } catch { /* private mode */ } }
+export const canSpeak = () => typeof speechSynthesis !== 'undefined' && typeof SpeechSynthesisUtterance === 'function';
+export function speak(text, force = false) {
+  if (!(prefs.voice || force) || !canSpeak() || !text) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-US'; u.rate = 1.02;
+    const v = speechSynthesis.getVoices().find((x) => /^en/i.test(x.lang)); if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch { /* ignore */ }
+}

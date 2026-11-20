@@ -1,12 +1,13 @@
 // App controller: boot, routing, rendering, user actions.
 import morphdom from './vendor/morphdom.js';
 import { store, requestPersistence } from './store.js';
-import { createModel, readinessScore, readyZone } from './program.js';
+import { createModel, readinessScore, readyZone, rampUp } from './program.js';
 import { EX, TPL, TESTS } from './data.js';
 import { dayKey, fromKey, gid, clone, fmtDur } from './util.js';
 import { mergeStates } from './merge.js';
 import { buildCSV, buildICS, gcalLink } from './export.js';
-import { unlockAudio, beep, buzz, keepAwake, gps, motion } from './sensors.js';
+import { unlockAudio, beep, buzz, keepAwake, gps, motion, prefs, setPref, speak } from './sensors.js';
+import { mountDemos } from './demos.js';
 import * as drive from './drive.js';
 import * as V from './views.js';
 import { VERSION } from './version.js';
@@ -19,7 +20,9 @@ const TAB_OF = { start: 'train', workout: 'train', timer: 'train', checkin: 'tra
 let deferredInstall = null;
 const ui = {
   view: 'today', startCtx: null, testForm: null, editDraft: null, checkin: null, progX: 'pullup', openHist: new Set(), reportOffset: 1,
-  rirAsk: null, reps: null, installable: false, version: VERSION,
+  rirAsk: null, reps: null, hold: null, installable: false, version: VERSION,
+  restLeft() { return restEnd ? (restEnd - Date.now()) / 1000 : 0; },
+  holdElapsed() { const h = ui.hold; return h ? Math.max(0, (Date.now() - h.started) / 1000) : 0; },
   iosHint: /iphone|ipad|ipod/i.test(navigator.userAgent) && !navigator.standalone,
   get live() { return store.local.live; },
   get local() { return store.local; },
@@ -55,11 +58,13 @@ function renderNow() {
     onBeforeElUpdated(from, to) {
       if (from.tagName === 'DETAILS' && from.dataset.key && from.dataset.key === to.dataset.key) { if (from.open) to.setAttribute('open', ''); else to.removeAttribute('open'); }
       if (from === document.activeElement && (from.tagName === 'INPUT' || from.tagName === 'TEXTAREA' || from.tagName === 'SELECT')) return false;
+      if (from.classList.contains('demo') && from.dataset.ex && from.dataset.ex === to.dataset.ex && from.className === to.className) return false; // keep the running animation
       return !from.isEqualNode(to);
     }
   });
   const tab = TAB_OF[ui.view] || ui.view;
   document.querySelectorAll('nav.tabs a').forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle('on', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  mountDemos(main); syncRestbar();
   renderSyncPill(); renderSheet();
 }
 function renderSyncPill() {
@@ -79,9 +84,9 @@ function renderSyncPill() {
 }
 let sheetHTML = '';
 function renderSheet() {
-  const html = V.repSheet(ui);
+  const html = V.repSheet(ui) || V.holdSheet(ui);
   if (html === sheetHTML) return; sheetHTML = html;
-  const el = $('#sheet'); el.innerHTML = html; el.hidden = !html;
+  const el = $('#sheet'); el.innerHTML = html; el.hidden = !html; if (html) mountDemos(el);
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, 3200); }
 
@@ -114,18 +119,58 @@ function go(v) {
 window.addEventListener('hashchange', route);
 
 /* ---------------- rest timer ---------------- */
-let restEnd = 0, restFired = true;
-function startRest(sec, label) { restEnd = Date.now() + sec * 1000; restFired = false; $('#restLbl').textContent = label; const b = $('#restbar'); b.hidden = false; b.classList.remove('over'); tickRest(); }
-function hideRest() { restEnd = 0; $('#restbar').hidden = true; }
+let restEnd = 0, restFired = true, restWarned = false;
+const spokenDur = (sec) => { const m = Math.floor(sec / 60), r = Math.round(sec % 60); return [m ? `${m} minute${m > 1 ? 's' : ''}` : '', r ? `${r} seconds` : ''].filter(Boolean).join(' '); };
+const focusOn = () => ui.view === 'workout' && prefs.focus && store.local.live && store.local.live.items.length;
+/** In Focus view the rest countdown is the big card; elsewhere it is the bottom bar. */
+function syncRestbar() { const b = $('#restbar'); const show = !!restEnd && !focusOn(); if (b.hidden === show) b.hidden = !show; }
+function startRest(sec, label) {
+  restEnd = Date.now() + sec * 1000; restFired = false; restWarned = sec <= 12; $('#restLbl').textContent = label; $('#restbar').classList.remove('over');
+  const L = store.local.live; if (L) L.cur = null; syncRestbar(); tickRest();
+  const nx = L ? V.curStep(L) : null; speak(`Rest ${spokenDur(sec)}. Next: ${nx ? V.stepLabel(L, nx.S[nx.k]) : ''}`);
+}
+function hideRest() { const was = restEnd; restEnd = 0; $('#restbar').hidden = true; if (was && focusOn()) render(); }
 function tickRest() {
   if (!restEnd) return; const left = (restEnd - Date.now()) / 1000, el = $('#restTime');
   if (left <= 0) {
     if (el.textContent !== 'Go') el.textContent = 'Go';
     $('#restbar').classList.add('over');
-    if (!restFired) { restFired = true; beep(1046, 0.25); setTimeout(() => beep(1318, 0.3), 260); buzz([200, 100, 200]); }
+    if (!restFired) {
+      restFired = true; beep(1046, 0.25); setTimeout(() => beep(1318, 0.3), 260); buzz([200, 100, 200]);
+      const L = store.local.live; if (L) { const c = V.curStep(L); speak(`Go. ${V.stepLabel(L, c.S[c.k])}`); }
+      if (focusOn()) { restEnd = 0; render(); return; } // auto-advance to the next set
+    }
     if (left < -20) hideRest(); return;
   }
+  if (!restWarned && left <= 10) { restWarned = true; speak('10 seconds'); }
+  if (left <= 3 && left > 0 && Math.ceil(left) !== tickRest.last) { tickRest.last = Math.ceil(left); beep(660, 0.08); }
   const txt = fmtDur(Math.ceil(left)); if (el.textContent !== txt) el.textContent = txt;
+  const fr = $('#focusRest'); if (fr && fr.textContent !== txt) fr.textContent = txt;
+}
+
+/* ---------------- hold countdown ---------------- */
+function startHold(i, j, w) {
+  const L = store.local.live, it = L.items[i]; const row = w ? it.wrows[j] : it.rows[j];
+  const total = Math.max(5, +row.r > 0 && !row.done ? +row.r : V.targetOf(it, j, w));
+  hideRest(); ui.hold = { i, j, w, total, started: Date.now() + 3000, lead: 3, warned: total <= 12, last: -1 };
+  beep(660, 0.1); speak(`${EX[it.x].n}. ${total} seconds. Starting in 3`); keepAwake(true); renderSheet();
+}
+function tickHold() {
+  const h = ui.hold; if (!h) return;
+  const now = Date.now(), el = $('#holdTime'), sub = $('#holdSub');
+  if (now < h.started) { const s = Math.ceil((h.started - now) / 1000); if (s !== h.last) { h.last = s; beep(660, 0.08); } if (el) el.textContent = String(s); return; }
+  if (h.lead) { h.lead = 0; beep(1046, 0.2); buzz(80); if (sub) sub.textContent = `of ${fmtDur(h.total)}`; }
+  const left = h.total - ui.holdElapsed();
+  if (!h.warned && left <= 10) { h.warned = true; speak('10 seconds left'); }
+  const s = Math.ceil(left); if (s <= 3 && s > 0 && s !== h.last) { h.last = s; beep(660, 0.08); }
+  if (left <= 0) { beep(1318, 0.4); buzz([200, 80, 200]); speak('Done'); finishHold(h.total); return; }
+  const txt = fmtDur(s); if (el && el.textContent !== txt) el.textContent = txt;
+}
+function finishHold(secs) {
+  const h = ui.hold; ui.hold = null; keepAwake(!!(store.local.live && store.local.live.timer && store.local.live.timer.running)); sheetHTML = null; renderSheet();
+  const L = store.local.live; if (!h || !L || secs < 1) { render(); return; }
+  const it = L.items[h.i]; const row = h.w ? it.wrows[h.j] : it.rows[h.j];
+  row.r = String(Math.round(secs)); if (!row.done) markDone(h.i, h.j, h.w); else saveLive();
 }
 
 /* ---------------- interval / run timer ---------------- */
@@ -163,9 +208,10 @@ function tickTimer() {
     let changed = false;
     while (t.running && t.end <= Date.now()) {
       t.idx++; lastBeep = -1; changed = true;
-      if (t.idx >= t.phases.length) { beep(1318, 0.5); buzz([300, 100, 300]); finishTimer('yes'); render(); return; }
+      if (t.idx >= t.phases.length) { beep(1318, 0.5); buzz([300, 100, 300]); speak('Run complete. Great work.'); finishTimer('yes'); render(); return; }
       const ph = t.phases[t.idx]; t.end += ph.s * 1000; gps.setPhase(ph.t);
     }
+    if (changed) { const ph = t.phases[t.idx]; speak(`${ph.n}. ${spokenDur(ph.s)}`); }
     if (changed) { const ph = t.phases[t.idx]; beep(ph.t === 'run' ? 1318 : 784, 0.35); buzz(ph.t === 'run' ? [400] : [150, 80, 150]); store.setLocal({ live: L }); if (ui.view === 'timer') renderNow(); return; }
     const s = Math.ceil(ui.timerLeft()); if (s <= 3 && s > 0 && s !== lastBeep) { lastBeep = s; beep(660, 0.09); }
   }
@@ -173,7 +219,7 @@ function tickTimer() {
   if (gps.track && Date.now() - lastSnap > 10000) { lastSnap = Date.now(); L.run.gpsSnap = gps.snapshot(); store.quiet(); }
 }
 setInterval(() => {
-  tickRest(); tickTimer();
+  tickRest(); tickTimer(); tickHold();
   const L = store.local.live;
   if (L) document.querySelectorAll('[data-elapsed]').forEach((el) => { const v = fmtDur((Date.now() - L.start) / 1000); if (el.textContent !== v) el.textContent = v; });
 }, 250);
@@ -190,14 +236,16 @@ function newSessionFromPlan(mode) {
   };
 }
 function goLive() {
-  const c = ui.startCtx, T = TPL[c.tpl], pl = model().planSession(c.tpl, c);
+  const c = ui.startCtx, T = TPL[c.tpl], test = T.kind === 'test';
+  const pl = test ? model().planTest(c) : model().planSession(c.tpl, c);
   const live = {
-    id: gid('s_'), tpl: c.tpl, kind: T.kind, title: T.name + (c.short ? ' (short)' : ''), start: Date.now(), short: c.short, phaseName: c.phase.name, phase: c.phase.key,
-    ready: c.rd && c.rd.score ? { ...c.rd } : null, timer: null,
-    items: pl.items.map((i) => ({ ...i, rows: Array.from({ length: i.sets }, () => ({ r: '', kg: '', rir: null, done: false })) })),
-    run: pl.run ? { ...pl.run, completed: null, effort: null, gpsOn: !!pl.run.full && pl.run.alt === 'run' } : null
+    id: gid('s_'), tpl: c.tpl, kind: T.kind, title: T.name + (c.short ? ' (short)' : ''), start: Date.now(), short: !!c.short, phaseName: test ? 'Guided test' : c.phase.name, phase: c.phase.key,
+    ready: c.rd && c.rd.score ? { ...c.rd } : null, timer: null, cur: null, bw: test ? (ui.testForm && ui.testForm.bw) || '' : undefined,
+    items: pl.items.map((i) => ({ ...i, wrows: (i.warm || []).map((w) => ({ t: w.t, l: w.l, r: '', kg: '', done: false })), rows: Array.from({ length: i.sets }, () => ({ r: '', kg: '', rir: null, done: false })) })),
+    run: pl.run ? { ...pl.run, completed: null, effort: null, gpsOn: test ? gps.supported() : !!pl.run.full && pl.run.alt === 'run' } : null
   };
-  ui.startCtx = null; store.setLocal({ live }); requestPersistence(); go('workout');
+  ui.startCtx = null; ui.testForm = null; store.setLocal({ live }); requestPersistence(); go('workout');
+  const c0 = V.curStep(live); speak(`Let's go. First: ${V.stepLabel(live, c0.S[c0.k])}`);
 }
 function startFreeRun() {
   const live = { id: gid('s_'), tpl: 'F', kind: 'run', title: 'Free run', start: Date.now(), short: false, phaseName: 'Free run', phase: model().phaseInfo().key, ready: null, timer: null, items: [],
@@ -207,13 +255,20 @@ function startFreeRun() {
 function finishLive() {
   const L = store.local.live;
   if (L.timer && L.timer.running) finishTimer(L.timer.mode === 'phases' ? 'part' : 'yes');
-  const items = L.items.map((it) => ({
-    x: it.x, sec: it.sec, plan: { targets: it.targets, load: it.load },
-    sets: it.rows.map((r, j) => ({ r, j })).filter(({ r }) => r.done).map(({ r, j }) => {
-      const z = { r: r.r === '' ? (it.targets[j] ?? it.targets[0]) : +r.r, kg: r.kg === '' ? (it.load || 0) : +r.kg };
-      if (r.rir != null && r.rir !== '') z.rir = +r.rir; return z;
-    })
-  })).filter((i) => i.sets.length);
+  if (L.kind === 'test') { finishTest(L); return; }
+  const items = L.items.map((it) => {
+    const o = {
+      x: it.x, sec: it.sec, plan: { targets: it.targets, load: it.load },
+      sets: it.rows.map((r, j) => ({ r, j })).filter(({ r }) => r.done).map(({ r, j }) => {
+        const z = { r: r.r === '' ? (it.targets[j] ?? it.targets[0]) : +r.r, kg: r.kg === '' ? (it.load || 0) : +r.kg };
+        if (r.rir != null && r.rir !== '') z.rir = +r.rir; return z;
+      })
+    };
+    // Ramp-up sets are kept apart from `sets`, so progress, volume and e1RM never count them.
+    const warm = (it.wrows || []).filter((r) => r.done).map((r) => ({ r: r.r === '' ? r.t : +r.r, kg: r.kg === '' ? r.l || 0 : +r.kg }));
+    if (warm.length) o.warm = warm;
+    return o;
+  }).filter((i) => i.sets.length);
   const R = L.run;
   const ranSomething = R && (R.completed && R.completed !== 'no' || (R.gps && R.gps.km > 0) || R.secs > 60);
   if (!items.length && !ranSomething) { toast('Tick at least one set (or do the run) before finishing.'); return; }
@@ -228,7 +283,50 @@ function finishLive() {
   store.putRecord(rec); store.setLocal({ live: null });
   ui.checkin = clone(rec); go('checkin');
 }
-function discardLive() { if (gps.watchId != null) gps.stop(0); keepAwake(false); hideRest(); closeReps(); ui.rirAsk = null; store.setLocal({ live: null }); go('train'); }
+/** Guided test → the same test record the manual form saves. */
+function finishTest(L) {
+  const t = {};
+  for (const it of L.items) if (it.sec === 'test') { const r = it.rows.find((x) => x.done && +x.r > 0); if (r) t[it.testKey] = Math.round(+r.r); }
+  const R = L.run; if (L.timer && L.timer.running) finishTimer('yes');
+  if (R && R.secs >= 30) t.runMin = Math.round((R.secs / 60) * 10) / 10;
+  if (!TESTS.some(([k]) => t[k] > 0) && !t.runMin) { toast('Finish at least one test (enter the reps and tap Done) before saving.'); return; }
+  const startBefore = model().programStart, date = dayKey(L.start);
+  const bw = +L.bw > 30 && +L.bw < 200 ? Math.round(+L.bw * 10) / 10 : null;
+  if (bw) store.putRecord({ id: 'w_' + date, type: 'weigh', d: date, kg: bw });
+  const warm = L.items.filter((it) => it.sec === 'prep').map((it) => ({ x: it.x, sec: 'prep', plan: { targets: it.targets, load: 0 }, sets: it.rows.filter((r) => r.done).map((r, j) => ({ r: r.r === '' ? it.targets[j] ?? it.targets[0] : +r.r, kg: 0 })) })).filter((i) => i.sets.length);
+  const rec = { id: L.id, type: 'session', kind: 'test', tpl: 'T', title: 'Test day', date: new Date(L.start).toISOString(), dur: Math.round((Date.now() - L.start) / 1000), mode: 'live', pending: false, items: warm, test: { date, ...t, bw },
+    ...(R && R.secs ? { run: { alt: 'test', full: true, lvl: 0, completed: 'yes', effort: R.effort, secs: R.secs, ...(R.gps ? { gps: R.gps } : {}) } } : {}) };
+  if (gps.watchId != null) gps.stop(0);
+  keepAwake(false); hideRest(); ui.rirAsk = null; ui.hold = null; closeReps();
+  store.putRecord(rec);
+  if (!startBefore) store.updateProfile({ programStart: date });
+  else if (!store.state.profile.programStart) store.updateProfile({ programStart: startBefore });
+  store.setLocal({ live: null }); speak('Test saved.'); toast('Test saved. The plan is set from your numbers.'); go('today');
+}
+function discardLive() { ui.hold = null; sheetHTML = null; if (gps.watchId != null) gps.stop(0); keepAwake(false); hideRest(); closeReps(); ui.rirAsk = null; store.setLocal({ live: null }); go('train'); }
+
+/** Tick (or untick) one set, start the right rest, and move Focus on to the next set. */
+function markDone(i, j, w) {
+  const L = store.local.live, it = L.items[i]; if (!it) return;
+  const e = EX[it.x], r = w ? it.wrows[j] : it.rows[j]; if (!r) return;
+  if (!r.done && it.sec === 'test' && !(+r.r > 0)) { toast('Enter how many clean reps you did, then tap Done.'); const inp = document.getElementById(`fs-${i}-${j}`) || document.getElementById(`s-${i}-${j}`); if (inp) inp.focus(); return; }
+  r.done = !r.done; L.cur = null;
+  if (r.done) {
+    if (r.r === '') r.r = String(V.targetOf(it, j, w));
+    if (!w && (e.wlo || e.always) && r.kg === '' && it.sec !== 'test') r.kg = String(it.load || 0);
+    if (w && r.kg === '') r.kg = String(r.l || 0);
+    buzz(30);
+    const S = V.stepsOf(L); const k = S.findIndex((st) => !st.run && st.i === i && st.j === j && !!st.w === !!w);
+    const nx = S.slice(k + 1).find((st) => st.run || !V.rowAt(L, st).done);
+    const nextSame = nx && !nx.run && nx.i === i;
+    const P = store.state.profile;
+    const sec = w ? 60 : it.sec === 'test' ? 210 : it.sec === 'prep' ? (e.timer ? 15 : 45) : e.main ? P.restMain : P.restAcc;
+    if (nx) startRest(nextSame ? sec : Math.max(sec, it.sec === 'prep' ? 30 : sec), `Rest · next: ${V.stepLabel(L, nx, false)}`);
+    else hideRest();
+    ui.rirAsk = !w && it.sec === 'main' ? { i, j } : null;
+  } else { r.rir = null; if (ui.rirAsk && ui.rirAsk.i === i && ui.rirAsk.j === j) ui.rirAsk = null; }
+  saveLive(); if (focusOn()) window.scrollTo(0, 0);
+}
 
 /* ---------------- rep counter sheet ---------------- */
 function closeReps() { if (motion.on) motion.stop(); ui.reps = null; renderSheet(); }
@@ -299,18 +397,13 @@ document.addEventListener('click', (e) => {
     case 'golive': goLive(); break;
     case 'goquick': { const r = store.putRecord(newSessionFromPlan('quick')); ui.startCtx = null; ui.checkin = clone(r); toast('Saved as planned.'); go('checkin'); break; }
     case 'golater': { store.putRecord(newSessionFromPlan('later')); ui.startCtx = null; toast('Saved. Add the details from Today when you have a minute.'); go('today'); break; }
-    case 'setdone': {
-      const it = L.items[+d.i], r = it.rows[+d.j]; r.done = !r.done;
-      if (r.done) {
-        if (r.r === '') r.r = String(it.targets[+d.j] ?? it.targets[it.targets.length - 1]);
-        if ((EX[it.x].wlo || EX[it.x].always) && r.kg === '') r.kg = String(it.load || 0);
-        const lastSet = it.rows.every((x) => x.done);
-        const sec = it.sec === 'prep' ? 45 : EX[it.x].main ? store.state.profile.restMain : store.state.profile.restAcc;
-        startRest(sec, lastSet ? 'Rest · next exercise' : `Rest · ${EX[it.x].n} set ${+d.j + 2}`);
-        ui.rirAsk = it.sec === 'main' ? { i: +d.i, j: +d.j } : null;
-      } else { r.rir = null; if (ui.rirAsk && ui.rirAsk.i === +d.i && ui.rirAsk.j === +d.j) ui.rirAsk = null; }
-      saveLive(); break;
-    }
+    case 'setdone': markDone(+d.i, +d.j, d.w === '1'); break;
+    case 'wmode': setPref('focus', d.v === '1'); L && (L.cur = null); syncRestbar(); render(); break;
+    case 'fnav': { if (!L) break; const c = V.curStep(L); const k = Math.min(c.S.length - 1, Math.max(0, c.k + +d.v)); L.cur = k; hideRest(); ui.rirAsk = null; saveLive(); window.scrollTo(0, 0); break; }
+    case 'holdgo': if (L) startHold(+d.i, +d.j, d.w === '1'); break;
+    case 'holdstop': if (ui.hold) { const el = ui.holdElapsed(); if (ui.hold.lead && Date.now() < ui.hold.started) { ui.hold = null; sheetHTML = null; renderSheet(); } else finishHold(Math.min(ui.hold.total, el)); } break;
+    case 'holdcancel': ui.hold = null; sheetHTML = null; renderSheet(); break;
+    case 'voicetest': speak('Pull-ups, set 1 of 3. 8 reps.', true); break;
     case 'rir': { const r = L.items[+d.i].rows[+d.j]; r.rir = +d.v; ui.rirAsk = null; saveLive(); break; }
     case 'riredit': ui.rirAsk = { i: +d.i, j: +d.j }; render(); break;
     case 'addset': L.items[+d.i].rows.push({ r: '', kg: '', rir: null, done: false }); saveLive(); break;
@@ -323,14 +416,13 @@ document.addEventListener('click', (e) => {
       motion.start().catch((err) => { r.on = false; r.error = err.message; renderSheet(); });
       break;
     }
-    case 'repminus': if (ui.reps) { ui.reps.count = Math.max(0, ui.reps.count - 1); ui.reps.offset = ui.reps.count - motion.count; sheetHTML = ''; renderSheet(); } break;
-    case 'repplus': if (ui.reps) { ui.reps.count++; ui.reps.offset = ui.reps.count - motion.count; sheetHTML = ''; renderSheet(); } break;
+    case 'repminus': if (ui.reps) { ui.reps.count = Math.max(0, ui.reps.count - 1); ui.reps.offset = ui.reps.count - motion.count; sheetHTML = null; renderSheet(); } break;
+    case 'repplus': if (ui.reps) { ui.reps.count++; ui.reps.offset = ui.reps.count - motion.count; sheetHTML = null; renderSheet(); } break;
     case 'repclose': closeReps(); break;
     case 'repuse': {
       const r = ui.reps; if (!r || !L) break; const it = L.items[r.i]; if (!it) { closeReps(); break; }
       let j = it.rows.findIndex((x) => !x.done); if (j < 0) { it.rows.push({ r: '', kg: '', rir: null, done: false }); j = it.rows.length - 1; }
-      const row = it.rows[j]; row.r = String(r.count); row.done = true; if ((EX[it.x].wlo || EX[it.x].always) && row.kg === '') row.kg = String(it.load || 0);
-      closeReps(); startRest(EX[it.x].main ? store.state.profile.restMain : store.state.profile.restAcc, `Rest · ${EX[it.x].n}`); ui.rirAsk = it.sec === 'main' ? { i: r.i, j } : null; saveLive(); break;
+      it.rows[j].r = String(r.count); closeReps(); markDone(r.i, j, false); break;
     }
     case 'runcomp': L.run.completed = d.v; saveLive(); break;
     case 'runeff': L.run.effort = +d.v; saveLive(); break;
@@ -418,8 +510,8 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target, k = t.dataset.in; if (!k) return; const d = t.dataset, L = store.local.live;
-  if (k === 'setr' && L) { L.items[+d.i].rows[+d.j].r = t.value; store.quiet(); }
-  else if (k === 'setkg' && L) { L.items[+d.i].rows[+d.j].kg = t.value; store.quiet(); }
+  if ((k === 'setr' || k === 'setkg') && L) { const it = L.items[+d.i]; const row = d.w === '1' ? it.wrows[+d.j] : it.rows[+d.j]; if (row) { row[k === 'setr' ? 'r' : 'kg'] = t.value; store.quiet(); } }
+  else if (k === 'livebw' && L) { L.bw = t.value; store.quiet(); }
   else if (k === 'test' && ui.testForm) ui.testForm[d.f] = t.value;
   else if (k === 'cinotes' && ui.checkin) { ui.checkin.post = ui.checkin.post || {}; ui.checkin.post.notes = t.value; }
   else if (ui.editDraft) {
@@ -437,10 +529,12 @@ document.addEventListener('change', (e) => {
     case 'startpick': if (t.value) { const v = t.value; t.value = ''; if (L) { go('workout'); break; } ui.startCtx = model().ctxFor(v); go('start'); } break;
     case 'swap': if (t.value && L) {
       const it = L.items[+d.i]; const p = model().presc(t.value, it.rows.length, { phase: model().phaseInfo(), zone: L.ready ? readyZone(L.ready.score) : 'green', short: L.short });
-      Object.assign(it, { x: t.value, targets: p.targets, load: p.load, status: p.status, rir: p.rir }); it.rows.forEach((r) => { if (!r.done) { r.r = ''; r.kg = ''; } }); t.value = ''; saveLive();
+      Object.assign(it, { x: t.value, targets: p.targets, load: p.load, status: p.status, rir: p.rir });
+      if (it.sec === 'main') it.wrows = rampUp(t.value, p).map((w) => ({ t: w.t, l: w.l, r: '', kg: '', done: false })); it.rows.forEach((r) => { if (!r.done) { r.r = ''; r.kg = ''; } }); t.value = ''; saveLive();
     } break;
     case 'addex': if (t.value && L) { const p = model().presc(t.value, 3, { phase: model().phaseInfo(), zone: 'green', short: L.short }); L.items.push({ ...p, sec: 'main', base: t.value, rows: Array.from({ length: p.sets }, () => ({ r: '', kg: '', rir: null, done: false })) }); t.value = ''; saveLive(); } break;
     case 'gpson': if (L && L.run) { L.run.gpsOn = t.checked; if (L.timer && L.timer.running) { if (t.checked && gps.watchId == null) gps.start(); if (!t.checked && gps.watchId != null) { const s = gps.stop(timerRunSeconds()); if (s && s.km) L.run.gps = s; } } saveLive(); } break;
+    case 'pref': setPref(d.k, t.checked); if (d.k === 'voice' && t.checked) speak('Voice cues on.'); render(); break;
     case 'planday': { const plan = { ...P.plan }; if (t.value) plan[d.d] = t.value; else delete plan[d.d]; store.updateProfile({ plan }); break; }
     case 'variant': store.updateProfile({ variant: { ...P.variant, [d.b]: t.value } }); break;
     case 'setnum': { const v = +t.value; if (!isFinite(v) || t.value === '') { render(); break; } const min = +t.min || -Infinity, max = +t.max || Infinity; store.updateProfile({ [d.f]: Math.min(max, Math.max(min, v)) }); break; }

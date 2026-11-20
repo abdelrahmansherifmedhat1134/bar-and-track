@@ -18,6 +18,15 @@ export function readinessScore(rd) {
 }
 export function readyZone(score) { if (!score) return 'green'; return score >= READY.green ? 'green' : score >= READY.yellow ? 'yellow' : 'red'; }
 
+/** Ramp-up sets before a main lift: half reps at bodyweight, plus a lighter loaded set when the belt is on. */
+export function rampUp(x, p) {
+  const e = EX[x]; if (!e || !e.main || e.k !== 'reps') return [];
+  const t = p.targets[0] || e.lo;
+  if (!(p.load > 0)) return [{ t: Math.max(2, Math.ceil(t / 2)), l: 0 }];
+  const half = Math.floor((p.load / 2) / 2.5) * 2.5;
+  return half >= 2.5 ? [{ t: 5, l: 0 }, { t: 3, l: half }] : [{ t: 5, l: 0 }];
+}
+
 export function levelFromTest(min) {
   if (!min || min < 2) return 0; if (min < 3) return 2; if (min < 5) return 3; if (min < 8) return 5;
   if (min < 12) return 6; if (min < 15) return 7; if (min < 20) return 8; if (min < 25) return 9; return 10;
@@ -174,7 +183,7 @@ export function createModel(state, now = Date.now()) {
       if (seen.has(x)) continue; seen.add(x);
       const p = presc(x, n, ctx);
       if (ctx.sh && ['pullup', 'chinup', 'pushup'].includes(x)) { p.load = 0; if (p.status === 'load+') p.status = 'hold'; }
-      items.push({ ...p, sec: 'main', base: b });
+      items.push({ ...p, sec: 'main', base: b, warm: rampUp(x, p) });
     }
     let run = null;
     if (T.run || (T.fin && !ctx.short && ctx.zone !== 'red')) {
@@ -183,6 +192,13 @@ export function createModel(state, now = Date.now()) {
       else { const L = RUN[rl.lvl]; run = { alt: 'run', full, lvl: rl.lvl, desc: runDesc(L, full), phases: runPhases(L, full), why: rl.why }; }
     }
     return { items, run };
+  }
+  /** Guided test day: warm-up, one all-out set per test (3–4 min apart), then the run test. */
+  function planTest(ctx) {
+    const T = TPL.T, last = lastTest() || {};
+    const items = T.prep.map(([b, n]) => ({ ...presc(b, n, { ...ctx, short: false }), sec: 'prep' }));
+    for (const [x, key] of T.tests) items.push({ x, sec: 'test', testKey: key, sets: 1, targets: [last[key] || EX[x].lo], load: 0, status: '', rir: 0, warm: [], last: last[key] || null });
+    return { items, run: { alt: 'test', full: false, lvl: 0, phases: null, desc: 'Easy talking pace on the track. Stop when you would need to walk, or at 20 minutes', why: '' } };
   }
   const ctxFor = (tid, extra = {}) => ({ tpl: tid, phase: phaseInfo(), zone: 'green', short: false, sh: false, kn: false, rd: null, ...extra });
 
@@ -315,7 +331,7 @@ export function createModel(state, now = Date.now()) {
         lines.push(`${EX[x].n} est. 1RM: ${cur.toFixed(1)} kg${prev ? ` (${cur >= prev.y ? '+' : ''}${(cur - prev.y).toFixed(1)} vs before)` : ''}`); }
     }
     const runs = inWeek.filter((s) => s.run && s.run.alt !== 'walk');
-    if (runs.length) lines.push(`Runs: ${runs.map((s) => `${s.run.alt === 'free' ? 'free run' : 'L' + ((+s.run.lvl || 0) + 1)} ${s.run.completed || ''}${s.run.gps && s.run.gps.km ? ` ${s.run.gps.km.toFixed(2)} km` : ''}`).join('; ')}`);
+    if (runs.length) lines.push(`Runs: ${runs.map((s) => `${s.run.alt === 'free' ? 'free run' : s.run.alt === 'test' ? 'run test' : 'L' + ((+s.run.lvl || 0) + 1)} ${s.run.completed || ''}${s.run.gps && s.run.gps.km ? ` ${s.run.gps.km.toFixed(2)} km` : ''}`).join('; ')}`);
     const rd = inWeek.filter((s) => s.ready && s.ready.score).map((s) => s.ready.score);
     if (rd.length) lines.push(`Readiness avg: ${mean(rd).toFixed(1)}/5`);
     const rp = inWeek.filter((s) => s.post && s.post.rpe).map((s) => +s.post.rpe);
@@ -333,6 +349,6 @@ export function createModel(state, now = Date.now()) {
 
   return {
     P, programStart, sessions, real, pending, weighins, prehab, tests, vx, bwAt, lastTest, testMax, phaseInfo, histOf, presc, runLevel,
-    planSession, ctxFor, weekStartOf, weeks, plannedDays, streak, e1rm, banister, fatigueSignal, coachNotes, weeklyReport, sessLoad
+    planSession, planTest, ctxFor, weekStartOf, weeks, plannedDays, streak, e1rm, banister, fatigueSignal, coachNotes, weeklyReport, sessLoad
   };
 }

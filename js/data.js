@@ -17,6 +17,8 @@
  each   reps are per side
 */
 export const EX = {
+  genwarm: { n: 'General warm-up', k: 'hold', lo: 180, hi: 180, g: [], prep: 1, timer: 1, alt: [],
+    cues: ['Easy jog on the spot, jump rope with small low hops, or a brisk walk with arm circles.', 'Raise your pulse until you feel warm, not tired.', 'Finish with 10 arm circles each way and 10 hip circles.'] },
   pullup: { n: 'Pull-up', k: 'reps', lo: 5, hi: 12, wlo: 5, whi: 8, step: 2.5, g: ['back', 'biceps'], main: 1, test: 'pull', alt: ['chinup', 'invrow'],
     cues: ['Grip just outside shoulders. Full dead hang at the bottom, chin over the bar at the top.', 'Start each rep by pulling the shoulders down and back, then drive the elbows to your ribs.', 'Legs together and slightly in front (hollow body). No kipping or swinging.', 'Lower in 3 s. The lowering builds a lot of the muscle.'] },
   chinup: { n: 'Chin-up', k: 'reps', lo: 6, hi: 12, wlo: 5, whi: 8, step: 2.5, g: ['back', 'biceps'], main: 1, test: 'pull', tf: 1.1, alt: ['pullup', 'invrow'],
@@ -81,15 +83,15 @@ export const VOL_TARGET = { back: [10, 16], chest: [10, 16], shoulders: [8, 14],
 
 export const TPL = {
   A: { name: 'Upper 1 · Pull focus', short: 'Upper 1', kind: 'str',
-    prep: [['ytw', 2], ['passthru', 2], ['scappull', 2]],
+    prep: [['genwarm', 1], ['ytw', 2], ['passthru', 2], ['scappull', 2]],
     main: [['pullup', 4], ['dip', 3], ['invrow', 3], ['pushup', 3], ['hkr', 3]], fin: true,
     why: 'Weighted pull-ups lead. Back and biceps get the most volume; dips and push-ups keep chest and triceps working.' },
   B: { name: 'Lower + Back', short: 'Lower', kind: 'str',
-    prep: [['glutebr', 2], ['birddog', 1]],
+    prep: [['genwarm', 1], ['glutebr', 2], ['birddog', 1]],
     main: [['splitsq', 3], ['slrdl', 3], ['hipthrust', 3], ['slcurl', 3], ['calf', 2], ['backext', 3], ['sideplank', 2]], fin: false,
     why: 'Knee-friendly legs: hip-dominant work and hamstrings first (they protect a knee without an ACL), controlled split squats, no jumping or pivoting. Ends with the back strength the belt needs.' },
   C: { name: 'Upper 2 · Push focus', short: 'Upper 2', kind: 'str',
-    prep: [['ytw', 2], ['passthru', 2], ['scappush', 2]],
+    prep: [['genwarm', 1], ['ytw', 2], ['passthru', 2], ['scappush', 2]],
     main: [['dip', 4], ['chinup', 3], ['pike', 3], ['invrow', 3], ['platelat', 3], ['diamond', 2], ['hkr', 2]], fin: true,
     why: 'Weighted dips lead. Shoulder width from pike push-ups and lateral raises; chin-ups keep the back at two sessions a week.' },
   D: { name: 'Run-walk + Back care', short: 'Run', kind: 'run',
@@ -97,6 +99,8 @@ export const TPL = {
     main: [['backext', 2], ['deadbug', 2], ['birddog', 2], ['sideplank', 2]], fin: false, run: true,
     why: 'Main running session: build to 30 minutes of continuous easy running, then add time. Finish with spine and core work.' },
   T: { name: 'Test day', short: 'Test', kind: 'test',
+    prep: [['genwarm', 1], ['passthru', 1], ['ytw', 1], ['scappull', 1]],
+    tests: [['pullup', 'pull'], ['dip', 'dip'], ['pushup', 'push'], ['invrow', 'row']],
     why: 'Find your current numbers so the return ramp starts from where you are now, not from 6 months ago.' }
 };
 export const PROGRAM_TPLS = ['A', 'B', 'C', 'D'];
@@ -114,7 +118,7 @@ export const RUN = [
   { r: 420, w: 60, n: 3 }, { r: 600, w: 60, n: 3 }, { c: 15 }, { c: 20 }, { c: 25 }, { c: 30 }, { c: 35 }, { c: 40 }, { c: 45 }
 ];
 
-export const RUN_ALTS = { run: 'Run-walk', walk: 'Brisk walk', free: 'Free run' };
+export const RUN_ALTS = { run: 'Run-walk', walk: 'Brisk walk', free: 'Free run', test: 'Run test' };
 
 export function demoUrl(x) {
   const e = EX[x];
