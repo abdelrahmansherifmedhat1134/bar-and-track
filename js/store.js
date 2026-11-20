@@ -37,8 +37,9 @@ function lsRead(k) { try { return JSON.parse(localStorage.getItem(k)); } catch {
 function lsWrite(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota */ } }
 
 function initialState() {
-  const now = Date.now();
-  return { profile: { ...defaultProfile(), updatedAt: now }, records: { ['w_' + dayKey(now)]: { id: 'w_' + dayKey(now), type: 'weigh', d: dayKey(now), kg: 67, updatedAt: now } } };
+  // A brand-new device starts with defaults stamped "never set" (time 0), so syncing can't
+  // let them overwrite real settings from another device.
+  return { profile: defaultProfile(), records: {} };
 }
 const initialLocal = () => ({ live: null, drive: { clientId: '', folderId: '', fileIds: {}, token: '', tokenExp: 0, consented: false, lastSync: 0, lastError: '' }, dirty: false, installHintHidden: false });
 
@@ -89,7 +90,7 @@ class Store {
   }
   putRecord(rec) { const r = { ...clone(rec), updatedAt: this.stamp() }; this.state.records[rec.id] = r; this._journal(r); this._changed(true); return r; }
   deleteRecord(id) { const cur = this.state.records[id]; if (!cur) return; const r = { id, type: cur.type, deleted: true, updatedAt: this.stamp() }; this.state.records[id] = r; this._journal(r); this._changed(true); }
-  updateProfile(patch) { this.state.profile = { ...this.state.profile, ...clone(patch), updatedAt: this.stamp() }; this._journal(null, this.state.profile); this._changed(true); }
+  updateProfile(patch) { const t = this.stamp(); const _ts = { ...(this.state.profile._ts || {}) }; for (const k of Object.keys(patch)) _ts[k] = t; this.state.profile = { ...this.state.profile, ...clone(patch), _ts, updatedAt: t }; this._journal(null, this.state.profile); this._changed(true); }
   setLocal(patch) { Object.assign(this.local, patch); if ('live' in patch) this._saveLive(); this._changed(false); }
   /** The live workout is small and precious: mirror it synchronously on every change. */
   _saveLive() { this.local.liveAt = Date.now(); lsWrite(LIVE, { at: this.local.liveAt, live: this.local.live }); }

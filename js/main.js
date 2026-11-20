@@ -240,9 +240,16 @@ function scheduleAutoSync(delay = 5000) {
   clearTimeout(autoT);
   autoT = setTimeout(() => { if (drive.isConnected() && drive.hasValidToken() && navigator.onLine) drive.sync(); }, delay);
 }
-function autoSyncIfStale() { if (drive.isConnected() && drive.hasValidToken() && (store.local.dirty || Date.now() - (store.local.drive.lastSync || 0) > 5 * 60_000)) scheduleAutoSync(800); }
-drive.onStatus(() => { renderSyncPill(); if (ui.view === 'plan') render(); });
+function autoSyncIfStale() { if (drive.isConnected() && drive.hasValidToken() && (store.local.dirty || Date.now() - (store.local.drive.lastSync || 0) > 60_000)) scheduleAutoSync(800); }
+drive.onStatus((st) => {
+  renderSyncPill(); if (ui.view === 'plan') render();
+  // Persist a program start recovered from test history so every device stores it.
+  if (st.state === 'ok') { const M0 = model(); if (M0.programStart && !store.state.profile.programStart) store.updateProfile({ programStart: M0.programStart }); }
+});
 window.addEventListener('online', () => autoSyncIfStale());
+// While the app is open, pull changes from the other device every couple of minutes.
+setInterval(() => { if (!document.hidden && drive.isConnected() && drive.hasValidToken() && navigator.onLine && Date.now() - (store.local.drive.lastSync || 0) > 120_000) drive.sync(); }, 30_000);
+window.addEventListener('focus', () => autoSyncIfStale());
 
 /* ---------------- downloads & import ---------------- */
 function download(name, mime, text) {
@@ -348,12 +355,15 @@ document.addEventListener('click', (e) => {
     case 'savetest': {
       const f = ui.testForm;
       if (!TESTS.some(([k]) => +f[k] > 0)) { toast('Enter at least one test result.'); break; }
+      const startBefore = model().programStart;
       const date = f.date && f.date <= dayKey(Date.now()) ? f.date : dayKey(Date.now());
       const t = { date }; TESTS.forEach(([k]) => { if (+f[k] > 0) t[k] = Math.round(+f[k]); }); if (+f.runMin > 0) t.runMin = +f.runMin;
       const bw = +f.bw > 30 && +f.bw < 200 ? +f.bw : null;
       if (bw) store.putRecord({ id: 'w_' + date, type: 'weigh', d: date, kg: bw });
       store.putRecord({ id: gid('s_'), type: 'session', kind: 'test', tpl: 'T', title: 'Test day', date: new Date(+fromKey(date) + 12 * 3600e3).toISOString(), dur: 2400, mode: 'quick', pending: false, items: [], test: { ...t, bw } });
-      if (!store.state.profile.programStart) store.updateProfile({ programStart: date });
+      // First test (or first after a restart) starts the program; a re-test keeps the current week.
+      if (!startBefore) store.updateProfile({ programStart: date });
+      else if (!store.state.profile.programStart) store.updateProfile({ programStart: startBefore });
       ui.testForm = null; ui.startCtx = null; toast('Test saved. The plan is set from your numbers.'); go('today'); break;
     }
     case 'edit': { const s = store.state.records[d.id]; if (s && !s.deleted) { ui.editDraft = clone(s); go('edit'); } break; }
@@ -386,7 +396,7 @@ document.addEventListener('click', (e) => {
     case 'progx': ui.progX = d.v; render(); break;
     case 'repoff': ui.reportOffset = +d.v; render(); break;
     case 'copyreport': { const t = $('#reportText').textContent; navigator.clipboard.writeText(t).then(() => toast('Report copied.'), () => toast('Copy failed. Select the text and copy it.')); break; }
-    case 'restart': arm(b, () => { store.updateProfile({ programStart: null, deloadWeeks: [] }); toast('Program reset. Do a test day to start again.'); go('today'); }); break;
+    case 'restart': arm(b, () => { store.updateProfile({ programStart: null, restartedAt: dayKey(Date.now()), deloadWeeks: [] }); toast('Program reset. Do a test day to start again.'); go('today'); }); break;
     case 'sync': {
       if (!drive.isConfigured()) { go('plan'); break; }
       drive.sync({ interactive: true }).then((m) => { if (m) toast(m.localChanged ? 'Synced. Data from your other device was merged in.' : 'Synced with Google Drive.'); else if (drive.status.message) toast(drive.status.message); });
@@ -475,6 +485,8 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) store
   store.subscribe((synced) => { render(); if (synced) scheduleAutoSync(); });
   const L = store.local.live;
   if (L && L.timer && L.timer.running && L.run && L.run.gpsOn) { gps.start(L.run.gpsSnap); keepAwake(true); }
+  // Older versions could lose the program start date in sync; store the recovered one.
+  { const M0 = model(); if (M0.programStart && !store.state.profile.programStart) store.updateProfile({ programStart: M0.programStart }); }
   drive.initialStatus();
   if (drive.isConfigured()) drive.preload().then(() => { if (drive.isConnected() && drive.hasValidToken()) scheduleAutoSync(1500); });
   gps.onUpdate = () => { if (ui.view === 'timer') { const g = $('#gpsBox'); if (g) g.innerHTML = V.gpsInner(ui); } };

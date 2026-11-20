@@ -7,8 +7,8 @@ export const READY = { green: 3.5, yellow: 2.5 };
 export function defaultProfile(now = Date.now()) {
   return {
     age: 21, height: 178, restHR: 65, restMain: 150, restAcc: 75, weekStart: 6,
-    plan: { 6: 'A', 1: 'B', 3: 'C', 5: 'D' }, variant: {}, programStart: null, deloadWeeks: [],
-    trainTime: '18:00', morningTime: '08:00', updatedAt: 0
+    plan: { 6: 'A', 1: 'B', 3: 'C', 5: 'D' }, variant: {}, programStart: null, restartedAt: null, deloadWeeks: [],
+    trainTime: '18:00', morningTime: '08:00', updatedAt: 0, _ts: {}
   };
 }
 
@@ -61,9 +61,11 @@ export function createModel(state, now = Date.now()) {
   const lastTest = () => (tests.length ? tests[tests.length - 1] : null);
   function testMax(x) { const e = EX[x], t = lastTest(); if (!e || !e.test || !t || !t[e.test]) return 0; return Math.round(t[e.test] * (e.tf || 1)); }
 
+  /** The program starts on the first test after the last restart (robust even if the setting was lost in sync). */
+  const programStart = P.programStart || (tests.find((x) => !P.restartedAt || x.date >= P.restartedAt) || {}).date || null;
   function phaseInfo(t = now) {
-    if (!P.programStart) return { key: 'test', name: 'Test week', week: 0, rir: 3 };
-    const week = Math.floor(daysBetween(fromKey(P.programStart), t) / 7) + 1;
+    if (!programStart) return { key: 'test', name: 'Test week', week: 0, rir: 3 };
+    const week = Math.floor(daysBetween(fromKey(programStart), t) / 7) + 1;
     if (week <= 2) return { key: 'reentry', name: 'Re-entry', week, pct: 0.5, rir: 4, desc: 'About half your tested max per set with 4 reps in reserve. Tendons and joints catch up; you should finish feeling you could do much more.' };
     if (week <= 4) return { key: 'rebuild', name: 'Rebuild', week, pct: 0.65, rir: 3, desc: 'About two-thirds of your max with 3 reps in reserve. Full set counts return.' };
     const forced = new Set(P.deloadWeeks || []);
@@ -330,7 +332,7 @@ export function createModel(state, now = Date.now()) {
   }
 
   return {
-    P, sessions, real, pending, weighins, prehab, tests, vx, bwAt, lastTest, testMax, phaseInfo, histOf, presc, runLevel,
+    P, programStart, sessions, real, pending, weighins, prehab, tests, vx, bwAt, lastTest, testMax, phaseInfo, histOf, presc, runLevel,
     planSession, ctxFor, weekStartOf, weeks, plannedDays, streak, e1rm, banister, fatigueSignal, coachNotes, weeklyReport, sessLoad
   };
 }

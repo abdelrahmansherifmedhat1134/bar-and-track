@@ -171,3 +171,13 @@ test('every template references real exercises', () => {
   for (const [id, T] of Object.entries(TPL)) for (const [x] of [...(T.prep || []), ...(T.main || [])]) assert.ok(EX[x], `${id}:${x}`);
   for (const [x, e] of Object.entries(EX)) { if (e.next) assert.ok(EX[e.next], x); for (const a of e.alt || []) assert.ok(EX[a], `${x} alt ${a}`); }
 });
+
+test('program start is recovered from the first test when the setting is missing', () => {
+  const M = createModel(mkState({ records: [testSess(3, { pull: 15, dip: 14, push: 19, row: 14, runMin: 15 })] }), NOW);
+  assert.equal(M.programStart, dayKey(addDays(NOW, -3)));
+  assert.equal(M.phaseInfo().key, 'reentry');
+});
+test('after a restart, only tests on or after the restart count', () => {
+  const M = createModel(mkState({ profile: { restartedAt: dayKey(addDays(NOW, -1)) }, records: [testSess(10, { pull: 10 })] }), NOW);
+  assert.equal(M.programStart, null); assert.equal(M.phaseInfo().key, 'test');
+});

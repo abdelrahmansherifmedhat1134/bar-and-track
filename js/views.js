@@ -62,7 +62,7 @@ export function viewToday(M, ui) {
   const ws = M.weekStartOf(now); let strip = '';
   for (let i = 0; i < 7; i++) {
     const d = addDays(ws, i); const k = dayKey(d); const t = tplForDay(M, d.getDay()); const ss = M.real.filter((s) => dayKey(s.date) === k);
-    const dot = ss.length ? (ss.some((s) => s.kind === 'test') ? 'test' : ss.some((s) => s.kind === 'str') ? 'str' : 'run') : (t && k < dayKey(now) && ph.key !== 'test' && M.P.programStart && k >= M.P.programStart ? 'miss' : '');
+    const dot = ss.length ? (ss.some((s) => s.kind === 'test') ? 'test' : ss.some((s) => s.kind === 'str') ? 'str' : 'run') : (t && k < dayKey(now) && ph.key !== 'test' && M.programStart && k >= M.programStart ? 'miss' : '');
     strip += `<div class="day ${k === dayKey(now) ? 'today' : ''}"><span class="dn">${DAYS[d.getDay()]}</span><span class="dd num">${d.getDate()}</span><span class="dot ${dot}"></span><span class="dl">${t ? TPL[t].short : 'Rest'}</span></div>`;
   }
   const w = M.weeks(1)[0], st = M.streak();
@@ -131,7 +131,7 @@ export function viewTest(M, ui) {
     <label class="f" for="t-bw">Bodyweight (kg)<input class="num" type="number" step="0.1" min="30" max="200" inputmode="decimal" id="t-bw" value="${esc(f.bw)}" data-in="test" data-f="bw"></label>
     <label class="f" for="t-date">Date<input type="date" id="t-date" value="${esc(f.date)}" max="${dayKey(Date.now())}" data-in="test" data-f="date"></label></div>
     <button class="btn primary wide" data-act="savetest">Save test</button>
-    <p class="small muted">${M.P.programStart ? 'The program keeps its current week; the new maxes recalibrate your targets.' : 'Saving starts the program: week 1 (Re-entry) begins on the test date.'}</p></section>`;
+    <p class="small muted">${M.programStart ? 'The program keeps its current week; the new maxes recalibrate your targets.' : 'Saving starts the program: week 1 (Re-entry) begins on the test date.'}</p></section>`;
 }
 
 /* ===================== Live workout ===================== */
@@ -285,7 +285,7 @@ export function viewPlan(M, ui) {
   const syncTxt = { off: 'Not connected.', idle: 'Connected.', syncing: 'Syncing…', ok: `Synced ${dl.lastSync ? fmtAgo(dl.lastSync) : ''}.`, auth: 'Signed out of Google. Tap Sync to sign in.', error: d.message, offline: d.message };
   return `<section class="card"><div class="eyebrow">Program</div><h2>${ph.key === 'test' ? 'Not started: do the test day' : `Week ${ph.week} · ${esc(ph.name)}`}</h2>
     <div class="stack small"><div><b>Weeks 1–2 Re-entry</b> <span class="muted">· 50% of tested max, 4 reps in reserve, one set fewer.</span></div><div><b>Weeks 3–4 Rebuild</b> <span class="muted">· 65%, 3 in reserve, full sets.</span></div><div><b>Then 6-week blocks</b> <span class="muted">· 5 build weeks (reps, then belt weight; reps-in-reserve speeds up or holds increases) + 1 deload with a re-test. The coach can call an early deload when fatigue builds up.</span></div></div>
-    ${P.programStart ? '<button class="btn sm danger" data-act="restart">Restart from Re-entry (after a long break)</button>' : ''}</section>
+    ${M.programStart ? '<button class="btn sm danger" data-act="restart">Restart from Re-entry (after a long break)</button>' : ''}</section>
   <section class="card"><h3>Weekly schedule</h3><div class="stack">${sched}</div>
     ${warn.length ? warn.map((w) => `<div class="note warn"><span class="small">${esc(w)}</span></div>`).join('') : '<p class="small muted">Three strength days with a day between upper sessions, plus the optional run day.</p>'}
     <details class="how" data-key="why-split"><summary>Why this split</summary><ul>${PROGRAM_TPLS.map((k) => `<li><b>${esc(TPL[k].name)}:</b> ${esc(TPL[k].why)}</li>`).join('')}<li>Upper body twice a week (best for growth); legs once heavy plus running, which is kinder to the knee.</li><li>On a 3-day week, skip the run day: the upper days already end with a run-walk finisher.</li></ul></details></section>
