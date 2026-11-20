@@ -1,6 +1,6 @@
 // Service worker: makes the app open instantly and work offline.
 // Bump VERSION (npm run bump) whenever any file in ASSETS changes, so devices pick up the update.
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const CACHE = 'bt-app-' + VERSION;
 const FONT_CACHE = 'bt-fonts-v1';
 const ASSETS = [
