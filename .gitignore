@@ -4,3 +4,4 @@ Thumbs.db
 *.log
 .vscode/
 *.tmp.html
+app-android/node_modules/

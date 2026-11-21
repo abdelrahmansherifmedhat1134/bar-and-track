@@ -1,0 +1,85 @@
+name: Android app
+
+# Builds the Android shell (app-android/) into a signed APK and publishes it as a GitHub release.
+# The app loads the live website, so web changes reach it without a new APK; this only needs to run
+# when the native part changes. Needs the repo secret BT_KEYSTORE_B64 (the signing key, base64).
+
+on:
+  push:
+    branches: [main]
+    paths: ['app-android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app-android/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install and sync Capacitor
+        run: |
+          npm ci --no-audit --no-fund
+          npx cap sync android
+
+      - name: Signing key
+        env:
+          KEY_B64: ${{ secrets.BT_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEY_B64" ]; then
+            echo "::error::The BT_KEYSTORE_B64 secret is missing. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/bt.jks"
+          echo "BT_KEYSTORE_FILE=$RUNNER_TEMP/bt.jks" >> "$GITHUB_ENV"
+          {
+            echo "### Signing certificate"
+            echo '```'
+            keytool -list -v -keystore "$RUNNER_TEMP/bt.jks" -storepass barandtrack | grep -E 'SHA1|SHA256:'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build release APK
+        working-directory: app-android/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/bar-and-track.apk"
+          ls -l "$RUNNER_TEMP/bar-and-track.apk"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="android-v$VERSION"
+          NOTES="Android app $VERSION. Install bar-and-track.apk on your phone. The app loads the live Bar & Track site, so it updates itself; reinstall only when a new Android version is released."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RUNNER_TEMP/bar-and-track.apk" --clobber
+          else
+            gh release create "$TAG" "$RUNNER_TEMP/bar-and-track.apk" --title "Bar & Track for Android $VERSION" --notes "$NOTES" --latest
+          fi
+          echo "APK: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/bar-and-track.apk" >> "$GITHUB_STEP_SUMMARY"

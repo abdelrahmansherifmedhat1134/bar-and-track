@@ -8,6 +8,7 @@ import { mergeStates } from './merge.js';
 import { buildCSV, buildICS, gcalLink } from './export.js';
 import { unlockAudio, beep, buzz, keepAwake, gps, motion, prefs, setPref, speak } from './sensors.js';
 import { mountDemos } from './demos.js';
+import * as native from './native.js';
 import * as drive from './drive.js';
 import * as V from './views.js';
 import { VERSION } from './version.js';
@@ -126,10 +127,16 @@ const focusOn = () => ui.view === 'workout' && prefs.focus && store.local.live &
 function syncRestbar() { const b = $('#restbar'); const show = !!restEnd && !focusOn(); if (b.hidden === show) b.hidden = !show; }
 function startRest(sec, label) {
   restEnd = Date.now() + sec * 1000; restFired = false; restWarned = sec <= 12; $('#restLbl').textContent = label; $('#restbar').classList.remove('over');
-  const L = store.local.live; if (L) L.cur = null; syncRestbar(); tickRest();
+  const L = store.local.live; if (L) L.rest = { end: restEnd, label }; syncRestbar(); tickRest();
   const nx = L ? V.curStep(L) : null; speak(`Rest ${spokenDur(sec)}. Next: ${nx ? V.stepLabel(L, nx.S[nx.k]) : ''}`);
 }
-function hideRest() { const was = restEnd; restEnd = 0; $('#restbar').hidden = true; if (was && focusOn()) render(); }
+function hideRest() { const was = restEnd; restEnd = 0; $('#restbar').hidden = true; const L = store.local.live; if (L && L.rest) { L.rest = null; store.quiet(); } if (was && focusOn()) render(); }
+/** Reopening the app mid-rest picks the countdown up where it really is. */
+function resumeRest(L) {
+  if (!L || !L.rest || !(L.rest.end > Date.now() - 15000)) { if (L) L.rest = null; return; }
+  restEnd = L.rest.end; restFired = restEnd <= Date.now(); restWarned = restEnd - Date.now() < 10000; $('#restLbl').textContent = L.rest.label || 'Rest';
+  if (restFired) { restEnd = 0; L.rest = null; } else syncRestbar();
+}
 function tickRest() {
   if (!restEnd) return; const left = (restEnd - Date.now()) / 1000, el = $('#restTime');
   if (left <= 0) {
@@ -138,7 +145,7 @@ function tickRest() {
     if (!restFired) {
       restFired = true; beep(1046, 0.25); setTimeout(() => beep(1318, 0.3), 260); buzz([200, 100, 200]);
       const L = store.local.live; if (L) { const c = V.curStep(L); speak(`Go. ${V.stepLabel(L, c.S[c.k])}`); }
-      if (focusOn()) { restEnd = 0; render(); return; } // auto-advance to the next set
+      if (focusOn()) { restEnd = 0; const L2 = store.local.live; if (L2) L2.rest = null; store.quiet(); render(); return; } // auto-advance to the next set
     }
     if (left < -20) hideRest(); return;
   }
@@ -152,7 +159,7 @@ function tickRest() {
 function startHold(i, j, w) {
   const L = store.local.live, it = L.items[i]; const row = w ? it.wrows[j] : it.rows[j];
   const total = Math.max(5, +row.r > 0 && !row.done ? +row.r : V.targetOf(it, j, w));
-  hideRest(); ui.hold = { i, j, w, total, started: Date.now() + 3000, lead: 3, warned: total <= 12, last: -1 };
+  hideRest(); ui.hold = { i, j, w, total, started: Date.now() + 3000, lead: 3, warned: total <= 12, last: -1 }; L.hold = { ...ui.hold }; store.quiet();
   beep(660, 0.1); speak(`${EX[it.x].n}. ${total} seconds. Starting in 3`); keepAwake(true); renderSheet();
 }
 function tickHold() {
@@ -167,7 +174,7 @@ function tickHold() {
   const txt = fmtDur(s); if (el && el.textContent !== txt) el.textContent = txt;
 }
 function finishHold(secs) {
-  const h = ui.hold; ui.hold = null; keepAwake(!!(store.local.live && store.local.live.timer && store.local.live.timer.running)); sheetHTML = null; renderSheet();
+  const h = ui.hold; ui.hold = null; if (store.local.live) { store.local.live.hold = null; store.quiet(); } keepAwake(!!(store.local.live && store.local.live.timer && store.local.live.timer.running)); sheetHTML = null; renderSheet();
   const L = store.local.live; if (!h || !L || secs < 1) { render(); return; }
   const it = L.items[h.i]; const row = h.w ? it.wrows[h.j] : it.rows[h.j];
   row.r = String(Math.round(secs)); if (!row.done) markDone(h.i, h.j, h.w); else saveLive();
@@ -181,6 +188,21 @@ function timerRunSeconds() {
   if (t.idx >= t.phases.length) return done;
   return done + (t.phases[t.idx].s - ui.timerLeft());
 }
+/** In the Android app, hand the run/walk switches to Android as scheduled notifications while the
+ *  app is in the background or the screen is off; in the foreground the app's own beeps and voice do it. */
+function syncCues() {
+  if (!native.isApp) return;
+  const L = store.local.live, t = L && L.timer;
+  if (!t || !t.running || t.mode !== 'phases' || !document.hidden) { native.cancelCues(); return; }
+  const list = []; let at = t.end;
+  for (let i = t.idx + 1; i < t.phases.length; i++) {
+    const ph = t.phases[i];
+    list.push({ at, title: `${ph.n} · ${fmtDur(ph.s)}`, body: `${ph.t === 'run' ? 'Run' : 'Walk'} now. Part ${i + 1} of ${t.phases.length}.` });
+    at += ph.s * 1000;
+  }
+  list.push({ at, title: 'Run complete', body: 'Great work. Open Bar & Track to save it.' });
+  native.scheduleCues(list);
+}
 function startTimer() {
   const L = store.local.live, R = L.run;
   if (L.timer) { go('timer'); return; }
@@ -189,7 +211,7 @@ function startTimer() {
     ? { mode: 'watch', running: true, started: now, pausedMs: 0, pausedAt: 0 }
     : { mode: 'phases', phases: R.phases, idx: 0, running: true, end: now + R.phases[0].s * 1000, started: now, pausedMs: 0, left: R.phases[0].s };
   if (R.gpsOn) { gps.start(); gps.setPhase(L.timer.mode === 'watch' ? 'run' : R.phases[0].t); }
-  beep(784, 0.3); keepAwake(true); hideRest();
+  beep(784, 0.3); keepAwake(!native.isApp); hideRest(); native.prepareRuns();
   store.setLocal({ live: L }); go('timer');
 }
 function finishTimer(completed) {
@@ -199,7 +221,7 @@ function finishTimer(completed) {
   R.secs = Math.round(secs); delete R.gpsSnap;
   if (completed && R.alt !== 'free' && !R.completed) R.completed = completed;
   if (t.mode === 'phases') { t.running = false; t.total = secs; t.idx = Math.max(t.idx, t.phases.length); } else L.timer = null;
-  keepAwake(false); store.setLocal({ live: L });
+  keepAwake(false); native.cancelCues(); store.setLocal({ live: L });
 }
 let lastBeep = -1, lastSnap = 0;
 function tickTimer() {
@@ -211,7 +233,9 @@ function tickTimer() {
       if (t.idx >= t.phases.length) { beep(1318, 0.5); buzz([300, 100, 300]); speak('Run complete. Great work.'); finishTimer('yes'); render(); return; }
       const ph = t.phases[t.idx]; t.end += ph.s * 1000; gps.setPhase(ph.t);
     }
-    if (changed) { const ph = t.phases[t.idx]; speak(`${ph.n}. ${spokenDur(ph.s)}`); }
+    const quiet = native.isApp && document.hidden; // the scheduled notification already cued it
+    if (changed && !quiet) { const ph = t.phases[t.idx]; speak(`${ph.n}. ${spokenDur(ph.s)}`); }
+    if (changed && quiet) { store.setLocal({ live: L }); return; }
     if (changed) { const ph = t.phases[t.idx]; beep(ph.t === 'run' ? 1318 : 784, 0.35); buzz(ph.t === 'run' ? [400] : [150, 80, 150]); store.setLocal({ live: L }); if (ui.view === 'timer') renderNow(); return; }
     const s = Math.ceil(ui.timerLeft()); if (s <= 3 && s > 0 && s !== lastBeep) { lastBeep = s; beep(660, 0.09); }
   }
@@ -223,7 +247,7 @@ setInterval(() => {
   const L = store.local.live;
   if (L) document.querySelectorAll('[data-elapsed]').forEach((el) => { const v = fmtDur((Date.now() - L.start) / 1000); if (el.textContent !== v) el.textContent = v; });
 }, 250);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
+document.addEventListener('visibilitychange', () => { syncCues(); if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
 
 /* ---------------- sessions ---------------- */
 function newSessionFromPlan(mode) {
@@ -303,14 +327,14 @@ function finishTest(L) {
   else if (!store.state.profile.programStart) store.updateProfile({ programStart: startBefore });
   store.setLocal({ live: null }); speak('Test saved.'); toast('Test saved. The plan is set from your numbers.'); go('today');
 }
-function discardLive() { ui.hold = null; sheetHTML = null; if (gps.watchId != null) gps.stop(0); keepAwake(false); hideRest(); closeReps(); ui.rirAsk = null; store.setLocal({ live: null }); go('train'); }
+function discardLive() { native.cancelCues(); ui.hold = null; sheetHTML = null; if (gps.watchId != null) gps.stop(0); keepAwake(false); hideRest(); closeReps(); ui.rirAsk = null; store.setLocal({ live: null }); go('train'); }
 
 /** Tick (or untick) one set, start the right rest, and move Focus on to the next set. */
 function markDone(i, j, w) {
   const L = store.local.live, it = L.items[i]; if (!it) return;
   const e = EX[it.x], r = w ? it.wrows[j] : it.rows[j]; if (!r) return;
   if (!r.done && it.sec === 'test' && !(+r.r > 0)) { toast('Enter how many clean reps you did, then tap Done.'); const inp = document.getElementById(`fs-${i}-${j}`) || document.getElementById(`s-${i}-${j}`); if (inp) inp.focus(); return; }
-  r.done = !r.done; L.cur = null;
+  r.done = !r.done;
   if (r.done) {
     if (r.r === '') r.r = String(V.targetOf(it, j, w));
     if (!w && (e.wlo || e.always) && r.kg === '' && it.sec !== 'test') r.kg = String(it.load || 0);
@@ -321,7 +345,10 @@ function markDone(i, j, w) {
     const nextSame = nx && !nx.run && nx.i === i;
     const P = store.state.profile;
     const sec = w ? 60 : it.sec === 'test' ? 210 : it.sec === 'prep' ? (e.timer ? 15 : 45) : e.main ? P.restMain : P.restAcc;
-    if (nx) startRest(nextSame ? sec : Math.max(sec, it.sec === 'prep' ? 30 : sec), `Rest · next: ${V.stepLabel(L, nx, false)}`);
+    // carry on from here (so starting with any exercise works), not from the top of the list
+    const after = S.slice(k + 1).concat(S.slice(0, k)).find((st) => st.run ? !(L.run.completed || L.run.secs) : !V.rowAt(L, st).done);
+    L.cur = after ? S.indexOf(after) : null;
+    if (after) startRest(after.run ? 30 : nextSame && after === nx ? sec : Math.max(sec, it.sec === 'prep' ? 30 : sec), `Rest · next: ${V.stepLabel(L, after, false)}`);
     else hideRest();
     ui.rirAsk = !w && it.sec === 'main' ? { i, j } : null;
   } else { r.rir = null; if (ui.rirAsk && ui.rirAsk.i === i && ui.rirAsk.j === j) ui.rirAsk = null; }
@@ -400,10 +427,15 @@ document.addEventListener('click', (e) => {
     case 'setdone': markDone(+d.i, +d.j, d.w === '1'); break;
     case 'wmode': setPref('focus', d.v === '1'); L && (L.cur = null); syncRestbar(); render(); break;
     case 'fnav': { if (!L) break; const c = V.curStep(L); const k = Math.min(c.S.length - 1, Math.max(0, c.k + +d.v)); L.cur = k; hideRest(); ui.rirAsk = null; saveLive(); window.scrollTo(0, 0); break; }
+    case 'fjump': { if (!L) break; const S = V.stepsOf(L); let k;
+      if (d.i === 'run') k = S.findIndex((x) => x.run);
+      else { const i = +d.i; k = S.findIndex((x) => !x.run && x.i === i && !V.rowAt(L, x).done); if (k < 0) k = S.findIndex((x) => !x.run && x.i === i); }
+      if (k >= 0) { L.cur = k; hideRest(); ui.rirAsk = null; const det = document.querySelector('details[data-key=jump]'); if (det) det.open = false; saveLive(); window.scrollTo(0, 0); } break; }
     case 'holdgo': if (L) startHold(+d.i, +d.j, d.w === '1'); break;
-    case 'holdstop': if (ui.hold) { const el = ui.holdElapsed(); if (ui.hold.lead && Date.now() < ui.hold.started) { ui.hold = null; sheetHTML = null; renderSheet(); } else finishHold(Math.min(ui.hold.total, el)); } break;
-    case 'holdcancel': ui.hold = null; sheetHTML = null; renderSheet(); break;
+    case 'holdstop': if (ui.hold) { const el = ui.holdElapsed(); if (ui.hold.lead && Date.now() < ui.hold.started) { ui.hold = null; if (L) { L.hold = null; store.quiet(); } sheetHTML = null; renderSheet(); } else finishHold(Math.min(ui.hold.total, el)); } break;
+    case 'holdcancel': ui.hold = null; if (L) { L.hold = null; store.quiet(); } sheetHTML = null; renderSheet(); break;
     case 'voicetest': speak('Pull-ups, set 1 of 3. 8 reps.', true); break;
+    case 'locsettings': native.openLocationSettings(); break;
     case 'rir': { const r = L.items[+d.i].rows[+d.j]; r.rir = +d.v; ui.rirAsk = null; saveLive(); break; }
     case 'riredit': ui.rirAsk = { i: +d.i, j: +d.j }; render(); break;
     case 'addset': L.items[+d.i].rows.push({ r: '', kg: '', rir: null, done: false }); saveLive(); break;
@@ -431,11 +463,11 @@ document.addEventListener('click', (e) => {
       const t = L.timer; if (!t) break;
       if (t.running) { t.left = ui.timerLeft(); t.running = false; t.pausedAt = Date.now(); }
       else { t.running = true; if (t.mode === 'phases') t.end = Date.now() + t.left * 1000; t.pausedMs = (t.pausedMs || 0) + (Date.now() - (t.pausedAt || Date.now())); t.pausedAt = 0; }
-      saveLive(); renderNow(); break;
+      saveLive(); renderNow(); syncCues(); break;
     }
-    case 'tskip': { const t = L.timer; if (!t || t.mode !== 'phases') break; if (t.running) t.end = Date.now(); else { t.idx++; if (t.idx < t.phases.length) t.left = t.phases[t.idx].s; else finishTimer('yes'); } saveLive(); tickTimer(); break; }
+    case 'tskip': { const t = L.timer; if (!t || t.mode !== 'phases') break; if (t.running) t.end = Date.now(); else { t.idx++; if (t.idx < t.phases.length) t.left = t.phases[t.idx].s; else finishTimer('yes'); } saveLive(); tickTimer(); syncCues(); break; }
     case 'tstop': arm(b, () => { const t = L.timer; finishTimer(t.mode === 'phases' ? (t.idx >= t.phases.length - 1 ? 'yes' : 'part') : 'yes'); if (L.timer && L.timer.mode === 'phases') L.timer = null; saveLive(); go('workout'); }); break;
-    case 'tback': L.timer = null; saveLive(); go('workout'); break;
+    case 'tback': L.timer = null; native.cancelCues(); saveLive(); go('workout'); break;
     case 'wfinish': finishLive(); break;
     case 'wdiscard': arm(b, discardLive); break;
     case 'rest': if (d.v === 'skip') hideRest(); else { restEnd = Math.max(Date.now(), restEnd) + +d.v * 1000; restFired = false; $('#restbar').classList.remove('over'); tickRest(); } break;
@@ -578,7 +610,13 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) store
   await store.load();
   store.subscribe((synced) => { render(); if (synced) scheduleAutoSync(); });
   const L = store.local.live;
-  if (L && L.timer && L.timer.running && L.run && L.run.gpsOn) { gps.start(L.run.gpsSnap); keepAwake(true); }
+  if (L && L.timer && L.timer.running && L.run && L.run.gpsOn) { gps.start(L.run.gpsSnap); keepAwake(!native.isApp); }
+  if (native.isApp) document.documentElement.classList.add('in-app');
+  resumeRest(L);
+  if (L && L.hold && L.items[L.hold.i]) { // a hold was running when the app closed
+    ui.hold = { ...L.hold, lead: Date.now() < L.hold.started ? L.hold.lead : 0, last: -1 };
+    if (ui.holdElapsed() >= ui.hold.total) setTimeout(() => finishHold(ui.hold.total), 0); else keepAwake(true);
+  }
   // Older versions could lose the program start date in sync; store the recovered one.
   { const M0 = model(); if (M0.programStart && !store.state.profile.programStart) store.updateProfile({ programStart: M0.programStart }); }
   drive.initialStatus();

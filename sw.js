@@ -1,13 +1,13 @@
 // Service worker: makes the app open instantly and work offline.
 // Bump VERSION (npm run bump) whenever any file in ASSETS changes, so devices pick up the update.
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const CACHE = 'bt-app-' + VERSION;
 const FONT_CACHE = 'bt-fonts-v1';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/main.js', './js/views.js', './js/program.js', './js/data.js', './js/util.js', './js/store.js', './js/merge.js',
   './js/drive.js', './js/config.js', './js/export.js', './js/charts.js', './js/demos.js', './js/sensors.js', './js/gpsmath.js', './js/repcount.js',
-  './js/version.js', './js/vendor/morphdom.js',
+  './js/version.js', './js/native.js', './js/vendor/morphdom.js', './js/vendor/capacitor-core.js',
   './icons/favicon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png'
 ];
 

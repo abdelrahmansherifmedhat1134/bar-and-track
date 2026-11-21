@@ -1,0 +1,23 @@
+{
+  "appId": "io.github.abdelrahmansherifmedhat1134.barandtrack",
+  "appName": "Bar & Track",
+  "webDir": "www",
+  "server": {
+    "url": "https://abdelrahmansherifmedhat1134.github.io/bar-and-track/",
+    "errorPath": "offline.html"
+  },
+  "android": {
+    "useLegacyBridge": true,
+    "backgroundColor": "#f2f4f5"
+  },
+  "plugins": {
+    "SocialLogin": {
+      "providers": { "google": true, "facebook": false, "apple": false, "twitter": false },
+      "logLevel": 1
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_bt",
+      "iconColor": "#17876F"
+    }
+  }
+}

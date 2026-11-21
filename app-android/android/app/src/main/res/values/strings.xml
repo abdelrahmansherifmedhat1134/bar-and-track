@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Bar &amp; Track</string>
+    <string name="title_activity_main">Bar &amp; Track</string>
+    <string name="package_name">io.github.abdelrahmansherifmedhat1134.barandtrack</string>
+    <string name="custom_url_scheme">io.github.abdelrahmansherifmedhat1134.barandtrack</string>
+    <string name="capacitor_background_geolocation_notification_channel_name">Run in progress</string>
+    <string name="capacitor_background_geolocation_notification_icon">drawable/ic_stat_bt</string>
+    <string name="capacitor_background_geolocation_notification_color">#17876F</string>
+</resources>

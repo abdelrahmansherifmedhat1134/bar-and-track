@@ -14,6 +14,7 @@ A personal calisthenics + running training app. Installable on phone and laptop,
 - **Focus view**: one set at a time with an animated demo and numbered steps, a big Done button, a rest countdown with "next up", and auto-advance. List view is one tap away.
 - **Warm-ups**: a timed general warm-up opens every session; loaded main lifts get ramp-up sets (kept out of progress stats).
 - **Guided test day**: warm-up, one all-out set per test with 3.5-minute rests, and a stopwatch for the run test; results save themselves.
+- **Android app** (`app-android/`): a small shell around this same site that adds what a web page can't do: GPS and run/walk alerts with the screen off, the phone's own voice, and Google sign-in for Drive. Web updates reach it automatically; GitHub Actions builds the APK (`.github/workflows/android.yml`) when the native part changes.
 - **Hold timers and spoken cues**: holds count down and record the time; optional voice announces sets, rest and run phases.
 - **Running**: 15-level run-walk ladder with an interval timer, GPS distance/pace/splits/route, free runs.
 - **Fitness–fatigue model** (Banister, 42 d / 7 d) with early-deload suggestions when fatigue builds and strength drops.

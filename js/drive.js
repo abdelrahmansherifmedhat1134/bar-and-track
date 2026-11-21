@@ -10,6 +10,7 @@ import { mergeStates, pruneTombstones } from './merge.js';
 import { createModel } from './program.js';
 import { buildCSV } from './export.js';
 import { GOOGLE_CLIENT_ID } from './config.js';
+import { isApp, googleAccessToken, googleSignOut } from './native.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3/';
@@ -32,7 +33,7 @@ export const folderUrl = () => (store.local.drive.folderId ? `https://drive.goog
 
 /** Load the Google sign-in library ahead of time so a tap can open the popup immediately. */
 export function preload() {
-  if (!isConfigured() || !navigator.onLine) return Promise.resolve(false);
+  if (!isConfigured() || !navigator.onLine || isApp) return Promise.resolve(false);
   if (!gisPromise) {
     gisPromise = new Promise((resolve, reject) => {
       if (self.google && google.accounts && google.accounts.oauth2) { resolve(); return; }
@@ -65,8 +66,18 @@ function ensureTokenClient() {
  * Get an access token. With interactive=true this MUST run synchronously inside a click handler
  * (before any await) so the browser allows Google's sign-in popup.
  */
+let nativeTried = 0;
 function getToken(interactive) {
   if (hasValidToken()) return Promise.resolve(store.local.drive.token);
+  if (isApp) {
+    // Inside the Android app Google's web sign-in is blocked, so use Android's account picker.
+    // Without a tap, try a silent refresh at most every 10 minutes (only if Drive was connected before).
+    if (!interactive && (!store.local.drive.consented || Date.now() - nativeTried < 600_000)) return Promise.reject(Object.assign(new Error('Tap Sync to sign in to Google.'), { code: 'auth' }));
+    nativeTried = Date.now();
+    return googleAccessToken(clientId(), SCOPE, interactive).then(({ token, exp }) => {
+      store.setDrive({ token, tokenExp: exp, consented: true, lastError: '' }); return token;
+    }, (e) => { throw Object.assign(new Error(interactive ? (e && e.message) || 'Google sign-in failed.' : 'Tap Sync to sign in to Google.'), { code: 'auth' }); });
+  }
   if (!interactive) return Promise.reject(Object.assign(new Error('Tap Sync to sign in to Google.'), { code: 'auth' }));
   const tc = ensureTokenClient();
   if (!tc) { preload(); return Promise.reject(new Error('Google sign-in is still loading. Tap again in a second.')); }
@@ -171,6 +182,7 @@ export function sync({ interactive = false } = {}) {
 export function disconnect() {
   const tok = store.local.drive.token;
   try { if (tok && self.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(tok, () => {}); } catch { /* ignore */ }
+  if (isApp) googleSignOut();
   store.setDrive({ token: '', tokenExp: 0, consented: false, folderId: '', fileIds: {}, lastError: '' });
   setStatus('off');
 }

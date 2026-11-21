@@ -5,6 +5,7 @@ import { barChart, lineChart, heatmap, routeSVG } from './charts.js';
 import { readyZone } from './program.js';
 import * as drive from './drive.js';
 import { prefs, canSpeak } from './sensors.js';
+import { isApp } from './native.js';
 
 const CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>';
 const unitWord = (x) => (EX[x].k === 'hold' ? 's' : 'reps');
@@ -18,7 +19,7 @@ function statusChip(st) {
     : st === 'grind' ? '<span class="chip warn">Hold weight</span>' : st === 'new' ? '<span class="chip">First time</span>' : '';
 }
 function chips(act, val, n, labels, extra = '') { return `<div class="chips" style="--n:${n}" role="group">${Array.from({ length: n }, (_, k) => { const v = labels ? labels[k][0] : k + 1; const on = String(val) === String(v); return `<button type="button" class="${on ? 'on' : ''}" data-act="${act}" data-v="${v}" aria-pressed="${on}"${extra}>${labels ? esc(labels[k][1]) : k + 1}</button>`; }).join('')}</div>`; }
-export const demoHTML = (x, cls = '') => `<div class="demo ${cls}" data-ex="${x}" aria-hidden="true"></div>`;
+export const demoHTML = (x, cls = '') => `<div class="demo ${cls}" data-ex="${x}"></div>`;
 const cuesHTML = (x) => `<ol class="cues">${EX[x].cues.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>${EX[x].knee ? '<p class="small muted">Knee: no pivoting or jumping. Stop at any instability.</p>' : ''}`;
 const videoLink = (x) => `<a class="demolink" href="${demoUrl(x)}" target="_blank" rel="noopener">More demo videos ↗</a>`;
 const howHTML = (x, open = false) => `<details class="how" data-key="how-${x}"${open ? ' open' : ''}><summary>How to do it</summary><div class="howbody">${demoHTML(x)}<div>${cuesHTML(x)}${videoLink(x)}</div></div></details>`;
@@ -51,6 +52,16 @@ export function viewToday(M, ui) {
       <p class="small">Six months off means your old numbers are not today's numbers. One short session finds your current max pull-ups, dips, push-ups and rows, plus how long you can run easily. The return ramp is built from these.</p>
       <div class="kv"><span>Takes</span><b>30–40 min</b><span>Then</span><b>2 weeks Re-entry, 2 weeks Rebuild</b></div>
       <button class="btn primary wide" data-act="start" data-id="T">Start test day</button></section>`;
+  } else if (tid && todays.some((x) => x.tpl === tid)) {
+    // Today's planned session is already saved: show it, and offer a redo (both are kept; delete either one).
+    const T = TPL[tid], mine = todays.filter((x) => x.tpl === tid);
+    hero = `<section class="card hero done"><div class="spread"><span class="eyebrow">Today · ${DAYS_LONG[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]}</span><span class="chip good">Done ✓</span></div>
+      <h2>${esc(T.name)}</h2>
+      <div class="list">${mine.map((x) => `<div class="li"><div><div class="t">${esc(x.title)} · ${new Date(x.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div><div class="s num">${esc(sessSummary(x))}</div></div>
+        <div class="row nowrap"><button class="btn sm" data-act="edit" data-id="${esc(x.id)}">Edit</button><button class="btn sm danger" data-act="delsess" data-id="${esc(x.id)}" aria-label="Delete this session">Delete</button></div></div>`).join('')}</div>
+      ${mine.length > 1 ? '<p class="small muted">Saved twice today. Delete the one that was a mistake; both count until you do.</p>' : '<p class="small muted">Nice work. Recovery starts now: eat, drink water, sleep.</p>'}
+      <button class="btn wide" data-act="start" data-id="${tid}">Redo this workout</button>
+      <p class="small muted">A redo is saved as a second session, so nothing is lost if the first one was logged wrong.</p></section>`;
   } else if (tid) {
     const T = TPL[tid]; const pl = M.planSession(tid, M.ctxFor(tid));
     hero = `<section class="card hero ${T.kind === 'run' ? 'run' : ''}"><div class="spread"><span class="eyebrow">Today · ${DAYS_LONG[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]}</span><span class="chip bar">${esc(ph.name)}</span></div>
@@ -208,8 +219,8 @@ function viewFocus(M, ui) {
   const L = ui.live; const { S, k } = curStep(L); const st = S[k];
   const rest = ui.restLeft();
   let body;
-  if (rest > 0 && !(L.cur != null)) {
-    const nx = S[curStep({ ...L, cur: null }).k];
+  if (rest > 0) {
+    const nx = st;
     const ask = ui.rirAsk && L.items[ui.rirAsk.i] ? L.items[ui.rirAsk.i].rows[ui.rirAsk.j] : null;
     body = `<section class="card restcard" aria-live="polite"><div class="eyebrow">Rest</div><div class="big num" id="focusRest">${fmtDur(Math.ceil(rest))}</div>
       <div class="row center"><button class="btn sm" data-act="rest" data-v="-15">−15 s</button><button class="btn sm" data-act="rest" data-v="30">+30 s</button><button class="btn sm primary" data-act="rest" data-v="skip">Skip rest</button></div>
@@ -246,7 +257,11 @@ function viewFocus(M, ui) {
   }
   const doneN = S.filter((x) => !x.run && rowAt(L, x).done).length, setN = S.filter((x) => !x.run).length;
   const strip = `<div class="progstrip" aria-label="${doneN} of ${setN} sets done"><div class="prog"><i style="width:${setN ? ((doneN / setN) * 100).toFixed(1) : 0}%"></i></div><span class="small muted num nowrap">${doneN}/${setN} sets</span>${modeSeg()}</div>`;
-  return `${liveHead(L)}${strip}${body}${k === S.length - 1 || !st ? bwCard(L) : ''}${endCard(L)}`;
+  const jump = `<details class="card jump" data-key="jump"><summary>All exercises · jump to any</summary><div class="list">${L.items.map((it, i) => {
+    const n = it.rows.filter((r) => r.done).length, here = st && !st.run && st.i === i;
+    return `<button class="li jumpli ${here ? 'here' : ''}" data-act="fjump" data-i="${i}"><span class="t">${esc(EX[it.x].n)}</span><span class="small muted num">${n}/${it.rows.length}${n === it.rows.length && n ? ' ✓' : ''}</span></button>`;
+  }).join('')}${L.run ? `<button class="li jumpli ${st && st.run ? 'here' : ''}" data-act="fjump" data-i="run"><span class="t">${L.run.alt === 'test' ? 'Run test' : 'Run'}</span><span class="small muted">${L.run.completed || L.run.secs ? '✓' : ''}</span></button>` : ''}</div></details>`;
+  return `${liveHead(L)}${strip}${jump}${body}${k === S.length - 1 || !st ? bwCard(L) : ''}${endCard(L)}`;
 }
 
 export function viewWorkout(M, ui) {
@@ -409,6 +424,12 @@ export function viewPlan(M, ui) {
     <label class="f" for="restMain">Rest, main lifts (s)<input class="num" type="number" min="30" max="600" step="15" id="restMain" value="${P.restMain}" data-ch="setnum" data-f="restMain"></label><label class="f" for="restAcc">Rest, accessories (s)<input class="num" type="number" min="15" max="600" step="15" id="restAcc" value="${P.restAcc}" data-ch="setnum" data-f="restAcc"></label></div>
     <div class="kv"><span>Estimated max HR</span><b class="num">${mx} bpm</b><span>Easy-run zone (Z2)</span><b class="num">${z2[0]}–${z2[1]} bpm</b><span>Protein target</span><b class="num">${Math.round(M.bwAt(Date.now()) * 1.6)}–${Math.round(M.bwAt(Date.now()) * 2.2)} g/day</b></div></section>
   <section class="card"><h3>Guides</h3><a class="btn" href="#guide">Belt safety, technique, knee and shoulder rules</a></section>
+  ${isApp ? `<section class="card"><h3>Android app</h3><p class="small">Runs keep going with the screen off: GPS keeps tracking and every run/walk switch arrives as a notification with sound and vibration, even with music playing.</p>
+    <p class="small muted">For distance with the screen off, set Location for Bar &amp; Track to <b>Allow all the time</b> in Android settings, and allow notifications. The app updates itself with the website.</p>
+    <button class="btn sm" data-act="locsettings">Open location settings</button></section>`
+    : /Android/i.test(navigator.userAgent) ? `<section class="card"><h3>Get the Android app</h3><p class="small">The website pauses when your screen locks. The Android app keeps runs going with the screen off (GPS, run/walk alerts, voice) and stays in sync with this site through Google Drive.</p>
+    <a class="btn primary" href="https://github.com/abdelrahmansherifmedhat1134/bar-and-track/releases/latest/download/bar-and-track.apk" rel="noopener">Download the app (APK)</a>
+    <p class="small muted">Android will ask you to allow installs from your browser once. After installing, open it, tap Sync to connect the same Google account, and your data comes across.</p></section>` : ''}
   ${ui.installable ? '<section class="card"><h3>Install</h3><p class="small muted">Adds the app to your home screen or desktop. It opens instantly and works offline.</p><button class="btn primary" data-act="install">Install Bar &amp; Track</button></section>' : ui.iosHint ? '<section class="card"><h3>Install on iPhone</h3><p class="small">In Safari tap Share, then <b>Add to Home Screen</b>.</p></section>' : ''}
   <section class="card"><h3>Data</h3><p class="small muted">Everything is stored on this device first${drive.isConnected() ? ' and synced to Google Drive' : ''}.</p>
     <div class="grid3"><button class="btn" data-act="exportjson">Export backup</button><button class="btn" data-act="exportcsv">Export CSV</button><label class="btn" for="importFile">Import backup<input type="file" id="importFile" accept="application/json,.json" data-ch="import" hidden></label></div>
