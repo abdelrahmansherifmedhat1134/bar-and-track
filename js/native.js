@@ -78,7 +78,8 @@ export async function cancelCues(kind = 'run') {
 /* ---------- voice ---------- */
 export async function speakNative(text) {
   const [T] = await pluginBox('TextToSpeech'); if (!T) return false;
-  return safe(async () => { await T.stop(); await T.speak({ text, lang: 'en-US', rate: 1.0, pitch: 1.0, volume: 1.0, queueStrategy: 0 }); return true; }, false);
+  // speak() resolves only when the sentence has finished, so don't wait for it
+  return safe(async () => { await timeout(T.stop(), 3000, 'Voice'); T.speak({ text, lang: 'en-US', rate: 1.0, pitch: 1.0, volume: 1.0, queueStrategy: 0 }).catch(() => {}); return true; }, false);
 }
 
 /* ---------- Google sign-in for Drive ---------- */

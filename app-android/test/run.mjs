@@ -27,10 +27,11 @@ async function connect() {
       adb(`forward tcp:9222 localabstract:${sock.trim()}`);
       try {
         const pages = await (await fetch('http://127.0.0.1:9222/json')).json();
-        const pg = pages.find((p) => /github\.io/.test(p.url)) || pages.find((p) => p.type === 'page');
+        const pg = pages.find((p) => /github\.io\/bar-and-track/.test(p.url) && p.webSocketDebuggerUrl) || pages.find((p) => p.type === 'page' && p.webSocketDebuggerUrl);
         if (pg) {
           ws = new WebSocket(pg.webSocketDebuggerUrl);
           await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+          ws.onclose = () => { ws = null; };
           ws.onmessage = (ev) => {
             const m = JSON.parse(ev.data);
             if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
@@ -47,8 +48,10 @@ async function connect() {
   throw new Error('WebView DevTools socket never appeared');
 }
 function cdp(method, params = {}) { const id = ++msgId; ws.send(JSON.stringify({ id, method, params })); return new Promise((res) => { pending.set(id, res); setTimeout(() => { if (pending.has(id)) { pending.delete(id); res({ error: { message: 'cdp timeout' } }); } }, 30000); }); }
-async function js(expr) {
+async function js(expr, retry = true) {
+  if (!ws || ws.readyState !== 1) { R.console.push('[test] reconnecting to the WebView'); await connect(); }
   const r = await cdp('Runtime.evaluate', { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true });
+  if (r.error && retry && /timeout/.test(r.error.message)) { try { ws.close(); } catch { /* ignore */ } ws = null; return js(expr, false); }
   if (r.error) return { __error: r.error.message };
   if (r.result && r.result.exceptionDetails) return { __error: (r.result.exceptionDetails.exception && r.result.exceptionDetails.exception.description) || r.result.exceptionDetails.text };
   return r.result && r.result.result ? r.result.result.value : undefined;
@@ -92,7 +95,9 @@ async function main() {
   await sleep(10000); shot('drive-connect-12s');
   const dstat = await js(`const d = await import('./js/drive.js'); return { state: d.status.state, message: d.status.message, toast: document.querySelector('#toast') && !document.querySelector('#toast').hidden ? document.querySelector('#toast').textContent : '' };`);
   step('Drive connect gives a visible result', sheet || !!(dstat && (dstat.message || dstat.toast)), { googleSheetShown: sheet, ...dstat });
-  adb('shell input keyevent KEYCODE_BACK'); await sleep(1500); toFront(); await sleep(1500);
+  const ui2 = adb('shell dumpsys activity activities | grep -m1 -E "topResumedActivity|mResumedActivity"');
+  if (!ui2.includes(PKG + '/.MainActivity')) { adb('shell input keyevent KEYCODE_BACK'); await sleep(1500); }
+  toFront(); await sleep(2500);
 
   // voice
   const tts = await js(`const n = await import('./js/native.js'); return await n.speakNative('Testing the voice');`);
