@@ -107,6 +107,8 @@ async function main() {
   await js(`location.hash = '#train';`); await sleep(1200);
   await click('[data-act=start][data-id=D]'); await sleep(1000);
   await click('[data-act=golive]'); await sleep(1500);
+  await js(`const d = document.querySelector('details[data-key=jump]'); if (d) d.open = true;`);
+  await click('[data-act=fjump][data-i=run]'); await sleep(1200);
   const gpsOn = await js(`const el = document.querySelector('#gpsOn'); if (el && !el.checked) el.click(); return !!(el && el.checked);`);
   await click('[data-act=runtimer]'); await sleep(2500); shot('run-timer');
   const t0 = await js(`const L = JSON.parse(localStorage.getItem('bt:live')).live; return { running: L.timer && L.timer.running, mode: L.timer && L.timer.mode, idx: L.timer && L.timer.idx, gpsOn: L.run.gpsOn };`);
