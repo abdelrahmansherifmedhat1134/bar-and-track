@@ -132,9 +132,9 @@ async function main() {
   adb('shell cmd statusbar expand-notifications'); await sleep(1500); shot('notification-shade');
   const tapped = tapText('Pause'); await sleep(2000);
   adb('shell cmd statusbar collapse'); toFront(); await sleep(2500);
-  const t1 = await js(`const L = JSON.parse(localStorage.getItem('bt:live')).live; const g = await import('./js/sensors.js'); const s = g.gps.snapshot ? g.gps.snapshot() : null; return { running: L.timer && L.timer.running, idx: L.timer && L.timer.idx, km: s && s.km, pts: g.gps.track && g.gps.track.pts ? g.gps.track.pts.length : null, state: g.gps.state, err: g.gps.error };`);
+  const t1 = await js(`const L = JSON.parse(localStorage.getItem('bt:live')).live; const g = await import('./js/sensors.js'); const s = g.gps.snapshot ? g.gps.snapshot() : null; return { running: L.timer && L.timer.running, idx: L.timer && L.timer.idx, dist_m: g.gps.track ? Math.round(g.gps.track.dist) : (s && s.dist), fixes: g.gps.track ? g.gps.track.accepted : null, rejected: g.gps.track ? g.gps.track.rejected : null, state: g.gps.state, err: g.gps.error };`);
   step('Pause button on the notification works', tapped && t1 && t1.running === false, { tapped, ...t1 });
-  step('GPS tracked while the screen was off', !!(t1 && (t1.km > 0.05 || t1.pts > 3)), t1);
+  step('GPS tracked while the screen was off', !!(t1 && (t1.dist_m > 50 || t1.fixes > 3)), t1);
   shot('back-in-app');
 
   // finish
