@@ -127,10 +127,10 @@ const focusOn = () => ui.view === 'workout' && prefs.focus && store.local.live &
 function syncRestbar() { const b = $('#restbar'); const show = !!restEnd && !focusOn(); if (b.hidden === show) b.hidden = !show; }
 function startRest(sec, label) {
   restEnd = Date.now() + sec * 1000; restFired = false; restWarned = sec <= 12; $('#restLbl').textContent = label; $('#restbar').classList.remove('over');
-  const L = store.local.live; if (L) L.rest = { end: restEnd, label }; syncRestbar(); tickRest();
+  const L = store.local.live; if (L) L.rest = { end: restEnd, label }; syncRestbar(); tickRest(); syncRestCues();
   const nx = L ? V.curStep(L) : null; speak(`Rest ${spokenDur(sec)}. Next: ${nx ? V.stepLabel(L, nx.S[nx.k]) : ''}`);
 }
-function hideRest() { const was = restEnd; restEnd = 0; $('#restbar').hidden = true; const L = store.local.live; if (L && L.rest) { L.rest = null; store.quiet(); } if (was && focusOn()) render(); }
+function hideRest() { const was = restEnd; restEnd = 0; native.cancelCues('rest'); $('#restbar').hidden = true; const L = store.local.live; if (L && L.rest) { L.rest = null; store.quiet(); } if (was && focusOn()) render(); }
 /** Reopening the app mid-rest picks the countdown up where it really is. */
 function resumeRest(L) {
   if (!L || !L.rest || !(L.rest.end > Date.now() - 15000)) { if (L) L.rest = null; return; }
@@ -154,6 +154,58 @@ function tickRest() {
   const txt = fmtDur(Math.ceil(left)); if (el.textContent !== txt) el.textContent = txt;
   const fr = $('#focusRest'); if (fr && fr.textContent !== txt) fr.textContent = txt;
 }
+
+function restAdd(sec) {
+  if (!restEnd) return;
+  restEnd = Math.max(Date.now(), restEnd + sec * 1000); restFired = false; $('#restbar').classList.remove('over');
+  const L = store.local.live; if (L && L.rest) { L.rest.end = restEnd; store.quiet(); }
+  tickRest(); syncRestCues();
+}
+function timerToggle() {
+  const L = store.local.live, t = L && L.timer; if (!t) return;
+  if (t.running) { t.left = ui.timerLeft(); t.running = false; t.pausedAt = Date.now(); speak('Paused'); }
+  else { t.running = true; if (t.mode === 'phases') t.end = Date.now() + t.left * 1000; t.pausedMs = (t.pausedMs || 0) + (Date.now() - (t.pausedAt || Date.now())); t.pausedAt = 0; speak('Resumed'); }
+  saveLive(); renderNow(); syncCues();
+}
+function timerSkip() {
+  const L = store.local.live, t = L && L.timer; if (!t || t.mode !== 'phases') return;
+  if (t.running) t.end = Date.now(); else { t.idx++; if (t.idx < t.phases.length) t.left = t.phases[t.idx].s; else finishTimer('yes'); }
+  saveLive(); tickTimer(); syncCues();
+}
+/** Android app: while you are in another app, a heads-up 10 s before a rest ends and when it is over. */
+function syncRestCues() {
+  if (!native.isApp) return;
+  const L = store.local.live;
+  if (!restEnd || !L || !document.hidden || restEnd - Date.now() < 3000) { native.cancelCues('rest'); return; }
+  const c = V.curStep(L), next = V.stepLabel(L, c.S[c.k], false);
+  native.scheduleCues([{ at: restEnd - 10000, title: '10 seconds of rest left', body: `Next: ${next}` }, { at: restEnd, title: 'Rest over. Go!', body: next }], 'rest');
+}
+/** Android app: the ongoing lock-screen notification with a live countdown and pause/skip buttons. */
+function controlsState() {
+  const L = store.local.live; if (!L) return null;
+  const t = L.timer;
+  if (t && t.mode === 'phases' && t.idx < t.phases.length) {
+    const ph = t.phases[t.idx], nx = t.phases[t.idx + 1], part = `${t.idx + 1}/${t.phases.length}`;
+    return t.running
+      ? { title: `${ph.n} · part ${part}`, text: nx ? `Next: ${nx.n} ${fmtDur(nx.s)}` : 'Last part', endsAt: Math.round(t.end), actions: [{ id: 'pause', label: 'Pause' }, { id: 'skip', label: 'Skip' }] }
+      : { title: `Paused · ${ph.n}`, text: `${fmtDur(Math.ceil(t.left))} left in this part`, endsAt: 0, actions: [{ id: 'resume', label: 'Resume' }, { id: 'skip', label: 'Skip' }] };
+  }
+  if (t && t.mode !== 'phases') return t.running ? { title: 'Run in progress', text: 'Stopwatch running', endsAt: 0, actions: [{ id: 'pause', label: 'Pause' }] } : { title: 'Run paused', text: 'Tap Resume to continue', endsAt: 0, actions: [{ id: 'resume', label: 'Resume' }] };
+  if (restEnd > Date.now()) {
+    const c = V.curStep(L);
+    return { title: 'Rest', text: `Next: ${V.stepLabel(L, c.S[c.k], false)}`, endsAt: Math.round(restEnd), actions: [{ id: 'rest30', label: '+30 s' }, { id: 'restskip', label: 'Skip rest' }] };
+  }
+  return null;
+}
+function onControl(a) {
+  const L = store.local.live; if (!L) return;
+  if ((a === 'pause' && L.timer && L.timer.running) || (a === 'resume' && L.timer && !L.timer.running)) timerToggle();
+  else if (a === 'skip') timerSkip();
+  else if (a === 'rest30') restAdd(30);
+  else if (a === 'restskip') hideRest();
+  render();
+}
+function syncControls() { if (native.isApp) native.setControls(controlsState(), onControl); }
 
 /* ---------------- hold countdown ---------------- */
 function startHold(i, j, w) {
@@ -243,18 +295,18 @@ function tickTimer() {
   if (gps.track && Date.now() - lastSnap > 10000) { lastSnap = Date.now(); L.run.gpsSnap = gps.snapshot(); store.quiet(); }
 }
 setInterval(() => {
-  tickRest(); tickTimer(); tickHold();
+  tickRest(); tickTimer(); tickHold(); syncControls();
   const L = store.local.live;
   if (L) document.querySelectorAll('[data-elapsed]').forEach((el) => { const v = fmtDur((Date.now() - L.start) / 1000); if (el.textContent !== v) el.textContent = v; });
 }, 250);
-document.addEventListener('visibilitychange', () => { syncCues(); if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
+document.addEventListener('visibilitychange', () => { syncCues(); syncRestCues(); if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
 
 /* ---------------- sessions ---------------- */
 function newSessionFromPlan(mode) {
   const c = ui.startCtx, T = TPL[c.tpl], pl = model().planSession(c.tpl, c), now = Date.now();
   return {
     id: gid('s_'), type: 'session', kind: T.kind, tpl: c.tpl, title: T.name + (c.short ? ' (short)' : ''), date: new Date(now).toISOString(), dur: c.short ? 1800 : 3600,
-    mode, pending: mode === 'later', short: c.short, ready: c.rd && c.rd.score ? { ...c.rd } : null, phase: c.phase.key,
+    mode, pending: mode === 'later', short: c.short, ready: c.rd && c.rd.score ? { ...c.rd } : null, fasted: !!c.fasted, phase: c.phase.key,
     items: pl.items.map((i) => ({ x: i.x, sec: i.sec, plan: { targets: i.targets, load: i.load }, sets: i.targets.map((t) => ({ r: t, kg: i.load || 0 })) })),
     run: pl.run ? { alt: pl.run.alt, full: pl.run.full, lvl: pl.run.lvl, completed: mode === 'quick' ? 'yes' : null, effort: null } : null
   };
@@ -264,7 +316,7 @@ function goLive() {
   const pl = test ? model().planTest(c) : model().planSession(c.tpl, c);
   const live = {
     id: gid('s_'), tpl: c.tpl, kind: T.kind, title: T.name + (c.short ? ' (short)' : ''), start: Date.now(), short: !!c.short, phaseName: test ? 'Guided test' : c.phase.name, phase: c.phase.key,
-    ready: c.rd && c.rd.score ? { ...c.rd } : null, timer: null, cur: null, bw: test ? (ui.testForm && ui.testForm.bw) || '' : undefined,
+    ready: c.rd && c.rd.score ? { ...c.rd } : null, fasted: !!c.fasted, timer: null, cur: null, bw: test ? (ui.testForm && ui.testForm.bw) || '' : undefined,
     items: pl.items.map((i) => ({ ...i, wrows: (i.warm || []).map((w) => ({ t: w.t, l: w.l, r: '', kg: '', done: false })), rows: Array.from({ length: i.sets }, () => ({ r: '', kg: '', rir: null, done: false })) })),
     run: pl.run ? { ...pl.run, completed: null, effort: null, gpsOn: test ? gps.supported() : !!pl.run.full && pl.run.alt === 'run' } : null
   };
@@ -272,7 +324,7 @@ function goLive() {
   const c0 = V.curStep(live); speak(`Let's go. First: ${V.stepLabel(live, c0.S[c0.k])}`);
 }
 function startFreeRun() {
-  const live = { id: gid('s_'), tpl: 'F', kind: 'run', title: 'Free run', start: Date.now(), short: false, phaseName: 'Free run', phase: model().phaseInfo().key, ready: null, timer: null, items: [],
+  const live = { id: gid('s_'), tpl: 'F', kind: 'run', title: 'Free run', start: Date.now(), short: false, phaseName: 'Free run', phase: model().phaseInfo().key, ready: null, fasted: model().isFastDay(Date.now()), timer: null, items: [],
     run: { alt: 'free', full: false, lvl: 0, phases: null, desc: '', completed: 'yes', effort: null, gpsOn: gps.supported() } };
   store.setLocal({ live }); go('workout');
 }
@@ -299,7 +351,7 @@ function finishLive() {
   const dur = Math.round((Date.now() - L.start) / 1000);
   const rec = {
     id: L.id, type: 'session', kind: L.kind, tpl: L.tpl, title: L.title, date: new Date(L.start).toISOString(), dur: L.tpl === 'F' && R && R.secs ? R.secs : dur,
-    mode: 'live', pending: false, short: L.short, ready: L.ready, phase: L.phase, items,
+    mode: 'live', pending: false, short: L.short, ready: L.ready, fasted: !!L.fasted, phase: L.phase, items,
     run: R ? { alt: R.alt, full: R.full, lvl: R.lvl, completed: R.alt === 'free' ? 'yes' : (R.completed || 'no'), effort: R.effort, ...(R.gps ? { gps: R.gps } : {}) } : null
   };
   if (gps.watchId != null) gps.stop(0);
@@ -318,7 +370,7 @@ function finishTest(L) {
   const bw = +L.bw > 30 && +L.bw < 200 ? Math.round(+L.bw * 10) / 10 : null;
   if (bw) store.putRecord({ id: 'w_' + date, type: 'weigh', d: date, kg: bw });
   const warm = L.items.filter((it) => it.sec === 'prep').map((it) => ({ x: it.x, sec: 'prep', plan: { targets: it.targets, load: 0 }, sets: it.rows.filter((r) => r.done).map((r, j) => ({ r: r.r === '' ? it.targets[j] ?? it.targets[0] : +r.r, kg: 0 })) })).filter((i) => i.sets.length);
-  const rec = { id: L.id, type: 'session', kind: 'test', tpl: 'T', title: 'Test day', date: new Date(L.start).toISOString(), dur: Math.round((Date.now() - L.start) / 1000), mode: 'live', pending: false, items: warm, test: { date, ...t, bw },
+  const rec = { id: L.id, type: 'session', kind: 'test', tpl: 'T', title: 'Test day', date: new Date(L.start).toISOString(), dur: Math.round((Date.now() - L.start) / 1000), mode: 'live', pending: false, fasted: !!L.fasted, items: warm, test: { date, ...t, bw },
     ...(R && R.secs ? { run: { alt: 'test', full: true, lvl: 0, completed: 'yes', effort: R.effort, secs: R.secs, ...(R.gps ? { gps: R.gps } : {}) } } : {}) };
   if (gps.watchId != null) gps.stop(0);
   keepAwake(false); hideRest(); ui.rirAsk = null; ui.hold = null; closeReps();
@@ -414,7 +466,7 @@ document.addEventListener('click', (e) => {
   switch (a) {
     case 'start': {
       if (L) { toast('Finish or discard the workout in progress first.'); go('workout'); break; }
-      if (d.id === 'T') { ui.startCtx = { tpl: 'T', phase: model().phaseInfo() }; ui.testForm = { pull: '', dip: '', push: '', row: '', runMin: '', bw: model().bwAt(Date.now()), date: dayKey(Date.now()) }; }
+      if (d.id === 'T') { ui.startCtx = { tpl: 'T', phase: model().phaseInfo(), fasted: model().isFastDay(Date.now()) }; ui.testForm = { pull: '', dip: '', push: '', row: '', runMin: '', bw: model().bwAt(Date.now()), date: dayKey(Date.now()) }; }
       else ui.startCtx = model().ctxFor(d.id);
       go('start'); break;
     }
@@ -436,6 +488,7 @@ document.addEventListener('click', (e) => {
     case 'holdcancel': ui.hold = null; if (L) { L.hold = null; store.quiet(); } sheetHTML = null; renderSheet(); break;
     case 'voicetest': speak('Pull-ups, set 1 of 3. 8 reps.', true); break;
     case 'locsettings': native.openLocationSettings(); break;
+    case 'fastday': { const v = +d.v, cur = store.state.profile.fastDays || []; store.updateProfile({ fastDays: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v].sort() }); break; }
     case 'rir': { const r = L.items[+d.i].rows[+d.j]; r.rir = +d.v; ui.rirAsk = null; saveLive(); break; }
     case 'riredit': ui.rirAsk = { i: +d.i, j: +d.j }; render(); break;
     case 'addset': L.items[+d.i].rows.push({ r: '', kg: '', rir: null, done: false }); saveLive(); break;
@@ -459,18 +512,13 @@ document.addEventListener('click', (e) => {
     case 'runcomp': L.run.completed = d.v; saveLive(); break;
     case 'runeff': L.run.effort = +d.v; saveLive(); break;
     case 'runtimer': e.preventDefault(); startTimer(); break;
-    case 'tpause': {
-      const t = L.timer; if (!t) break;
-      if (t.running) { t.left = ui.timerLeft(); t.running = false; t.pausedAt = Date.now(); }
-      else { t.running = true; if (t.mode === 'phases') t.end = Date.now() + t.left * 1000; t.pausedMs = (t.pausedMs || 0) + (Date.now() - (t.pausedAt || Date.now())); t.pausedAt = 0; }
-      saveLive(); renderNow(); syncCues(); break;
-    }
-    case 'tskip': { const t = L.timer; if (!t || t.mode !== 'phases') break; if (t.running) t.end = Date.now(); else { t.idx++; if (t.idx < t.phases.length) t.left = t.phases[t.idx].s; else finishTimer('yes'); } saveLive(); tickTimer(); syncCues(); break; }
+    case 'tpause': timerToggle(); break;
+    case 'tskip': timerSkip(); break;
     case 'tstop': arm(b, () => { const t = L.timer; finishTimer(t.mode === 'phases' ? (t.idx >= t.phases.length - 1 ? 'yes' : 'part') : 'yes'); if (L.timer && L.timer.mode === 'phases') L.timer = null; saveLive(); go('workout'); }); break;
     case 'tback': L.timer = null; native.cancelCues(); saveLive(); go('workout'); break;
     case 'wfinish': finishLive(); break;
     case 'wdiscard': arm(b, discardLive); break;
-    case 'rest': if (d.v === 'skip') hideRest(); else { restEnd = Math.max(Date.now(), restEnd) + +d.v * 1000; restFired = false; $('#restbar').classList.remove('over'); tickRest(); } break;
+    case 'rest': if (d.v === 'skip') hideRest(); else restAdd(+d.v); break;
     case 'cidone': {
       const s = ui.checkin; ui.checkin = null;
       if (s && d.v !== 'skip') { const n = $('#ci-notes'); s.post = s.post || {}; if (n) s.post.notes = n.value.trim(); store.putRecord(s); toast('Check-in saved.'); }
@@ -588,15 +636,37 @@ document.addEventListener('change', (e) => {
 
 /* ---------------- service worker & install ---------------- */
 function showUpdate() { $('#updatebar').hidden = false; }
+/* Updates: check when the app opens, when you come back to it (at most every 10 min) and when the
+ * connection returns. A new version is applied by itself only at a safe moment: right after opening,
+ * or when you leave the app, and never during a workout or while you're typing. Otherwise the
+ * Update bar shows and you choose. */
+const bootAt = Date.now(); let swReg = null, lastUpdateCheck = 0;
+const safeToUpdate = () => !store.local.live && !ui.checkin && !ui.reps && !ui.hold && !document.querySelector('input:focus, textarea:focus, select:focus');
+function applyUpdate(w) { if (w) w.postMessage('skipWaiting'); }
+function onUpdateReady(w) {
+  window.__waitingSW = w;
+  if (Date.now() - bootAt < 15000 && safeToUpdate()) applyUpdate(w); else showUpdate();
+}
+function checkForUpdate(force = false) {
+  if (!swReg || !navigator.onLine) return;
+  if (!force && Date.now() - lastUpdateCheck < 10 * 60 * 1000) return;
+  lastUpdateCheck = Date.now(); swReg.update().catch(() => {});
+}
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
-    if (reg.waiting && navigator.serviceWorker.controller) { window.__waitingSW = reg.waiting; showUpdate(); }
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+    swReg = reg; lastUpdateCheck = Date.now(); // registering already checked for a new version
+    if (reg.waiting && navigator.serviceWorker.controller) onUpdateReady(reg.waiting);
     reg.addEventListener('updatefound', () => {
       const w = reg.installing; if (!w) return;
-      w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { window.__waitingSW = w; showUpdate(); } });
+      w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) onUpdateReady(w); });
     });
-    setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+    setInterval(() => checkForUpdate(true), 60 * 60 * 1000);
   }).catch((e) => console.warn('SW registration failed', e));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkForUpdate();
+    else if (window.__waitingSW && safeToUpdate()) applyUpdate(window.__waitingSW); // reloads while you're away
+  });
+  window.addEventListener('online', () => checkForUpdate(true));
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloaded && window.__waitingSW) { reloaded = true; location.reload(); } });
 }

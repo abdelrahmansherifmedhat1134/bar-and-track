@@ -4,10 +4,22 @@ import { dayKey, pad, addDays } from './util.js';
 
 const csvCell = (v) => { const t = String(v ?? ''); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 
-/** One row per set (plus one per run / test). Oldest first. */
+/** Early (before 8:00), day (8:00–16:00) or evening, from the local start time. */
+export function timeOfDay(date) { const h = new Date(date).getHours(); return h < 8 ? 'early' : h < 16 ? 'day' : 'evening'; }
+/** Session-level columns repeated on each row so a pivot table can group by them. */
+function sessCols(s) {
+  const t = new Date(s.date), live = s.mode === 'live';
+  const r = s.ready || {};
+  return [live ? `${pad(t.getHours())}:${pad(t.getMinutes())}` : '', live && s.dur ? Math.round(s.dur / 60) : '', live ? timeOfDay(s.date) : '', s.fasted ? 'yes' : 'no', r.sleep || '', r.energy || '', r.sore || '', r.stress || ''];
+}
+
+/** One row per set (plus one per run / test). Oldest first. The last columns describe the session:
+ *  start time and duration (live sessions), time of day, fasting and the readiness answers. */
 export function buildCSV(model) {
-  const rows = [['date', 'session', 'logging', 'section', 'exercise', 'set', 'reps_or_seconds', 'added_kg', 'reps_in_reserve', 'bodyweight_kg', 'readiness', 'session_effort', 'run_km', 'notes']];
+  const rows = [['date', 'session', 'logging', 'section', 'exercise', 'set', 'reps_or_seconds', 'added_kg', 'reps_in_reserve', 'bodyweight_kg', 'readiness', 'session_effort', 'run_km', 'notes',
+    'start_time', 'duration_min', 'time_of_day', 'fasted', 'sleep', 'energy', 'soreness', 'stress']];
   for (const s of model.sessions.slice().reverse()) {
+    const sc = sessCols(s), before = rows.length;
     const d = dayKey(s.date), bw = model.bwAt(s.date), rd = s.ready && s.ready.score ? s.ready.score.toFixed(1) : '';
     const rpe = (s.post && s.post.rpe) || '', notes = (s.post && s.post.notes) || '';
     const mode = s.pending ? 'pending' : s.mode;
@@ -20,6 +32,7 @@ export function buildCSV(model) {
       rows.push([d, s.title, mode, 'run', lbl, '', s.run.completed || '', '', '', bw, rd, s.run.effort || rpe, s.run.gps && s.run.gps.km ? s.run.gps.km.toFixed(2) : '', notes]);
     }
     if (s.test) rows.push([d, 'Test day', mode, 'test', TESTS.map(([k, l]) => `${l} ${s.test[k] ?? '-'}`).join(' / ') + ` / run ${s.test.runMin ?? '-'} min`, '', '', '', '', s.test.bw || bw, '', '', '', notes]);
+    for (let i = before; i < rows.length; i++) rows[i].push(...sc);
   }
   return rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 }

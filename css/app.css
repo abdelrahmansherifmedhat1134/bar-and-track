@@ -252,3 +252,8 @@ svg.chart .lbl { fill: var(--ink); font-size: 13px; font-weight: 600; font-famil
 .jumpli { width: 100%; display: flex; justify-content: space-between; align-items: center; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 10px 2px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .jumpli.here .t { color: var(--bar); font-weight: 700; }
 .hero.done { border-left: 4px solid var(--good, #2f9e5b); }
+
+.tt { display: flex; flex-direction: column; font-size: .88rem; }
+.tth, .ttr { display: grid; grid-template-columns: 1.9fr .9fr .9fr .9fr .9fr; gap: 6px; padding: 7px 0; border-bottom: 1px solid var(--line); align-items: center; }
+.tth { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tth span:not(:first-child), .ttr span:not(:first-child) { text-align: right; }

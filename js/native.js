@@ -49,21 +49,22 @@ async function notifications() {
 }
 /** Ask for the notification permission ahead of the first run (needs a tap on Android 13+). */
 export async function prepareRuns() { await notifications(); }
-/** Replace the scheduled cues with `list` = [{at: ms, title, body}]. */
-export async function scheduleCues(list) {
+/** Replace the scheduled cues of one kind ('run' or 'rest') with `list` = [{at: ms, title, body}]. */
+const BASES = { run: CUE_BASE, rest: CUE_BASE + CUE_MAX };
+export async function scheduleCues(list, kind = 'run') {
   const LN = await notifications(); if (!LN) return;
-  await cancelCues();
-  const now = Date.now();
+  await cancelCues(kind);
+  const now = Date.now(), base = BASES[kind];
   const items = list.filter((c) => c.at > now + 500).slice(0, CUE_MAX).map((c, i) => ({
-    id: CUE_BASE + i, title: c.title, body: c.body || '', channelId: 'cues',
+    id: base + i, title: c.title, body: c.body || '', channelId: 'cues',
     schedule: { at: new Date(c.at), allowWhileIdle: true }, smallIcon: 'ic_stat_bt', iconColor: '#17876F', autoCancel: true
   }));
   if (items.length) await safe(() => LN.schedule({ notifications: items }));
 }
-export async function cancelCues() {
+export async function cancelCues(kind = 'run') {
   const LN = await plugin('LocalNotifications'); if (!LN) return;
   await safe(async () => {
-    const ids = Array.from({ length: CUE_MAX }, (_, i) => ({ id: CUE_BASE + i }));
+    const ids = Array.from({ length: CUE_MAX }, (_, i) => ({ id: BASES[kind] + i }));
     await LN.cancel({ notifications: ids });
     await LN.removeDeliveredNotifications({ notifications: ids });
   });
@@ -88,3 +89,15 @@ export async function googleAccessToken(clientId, scope, interactive) {
   return { token: tok.token, exp: Number.isFinite(exp) && exp > Date.now() ? exp : Date.now() + 55 * 60 * 1000 };
 }
 export async function googleSignOut() { const SL = await plugin('SocialLogin'); if (SL) await safe(() => SL.logout({ provider: 'google' })); }
+
+/* ---------- lock-screen controls (native RunControls plugin in the app) ---------- */
+let controlsSig = '', listening = false;
+/** Show or update the ongoing workout notification: {title, text, endsAt, actions:[{id,label}]}; null hides it. */
+export async function setControls(state, onAction) {
+  const RC = await plugin('RunControls'); if (!RC) return;
+  if (!listening && onAction) { listening = true; await safe(() => RC.addListener('action', (e) => onAction(e && e.action))); }
+  const sig = state ? JSON.stringify(state) : '';
+  if (sig === controlsSig) return;
+  controlsSig = sig;
+  if (state) await safe(() => RC.show(state)); else await safe(() => RC.hide());
+}

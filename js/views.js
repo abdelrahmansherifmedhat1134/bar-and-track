@@ -44,6 +44,7 @@ export function viewToday(M, ui) {
   const now = new Date(), ph = M.phaseInfo(), tid = tplForDay(M, now.getDay());
   const todays = M.real.filter((s) => dayKey(s.date) === dayKey(now));
   const live = ui.live;
+  const doneTpl = tid && todays.some((x) => x.tpl === tid) ? tid : !tid ? (todays.find((x) => TPL[x.tpl] && x.tpl !== 'T') || {}).tpl : null;
   let hero;
   if (live) {
     hero = `<section class="card hero"><span class="eyebrow">In progress</span><h2>${esc(live.title)}</h2><p class="small muted">Started ${fmtAgo(live.start)}.</p><a class="btn primary wide" href="#workout">Resume</a></section>`;
@@ -52,15 +53,15 @@ export function viewToday(M, ui) {
       <p class="small">Six months off means your old numbers are not today's numbers. One short session finds your current max pull-ups, dips, push-ups and rows, plus how long you can run easily. The return ramp is built from these.</p>
       <div class="kv"><span>Takes</span><b>30–40 min</b><span>Then</span><b>2 weeks Re-entry, 2 weeks Rebuild</b></div>
       <button class="btn primary wide" data-act="start" data-id="T">Start test day</button></section>`;
-  } else if (tid && todays.some((x) => x.tpl === tid)) {
-    // Today's planned session is already saved: show it, and offer a redo (both are kept; delete either one).
-    const T = TPL[tid], mine = todays.filter((x) => x.tpl === tid);
+  } else if (doneTpl) {
+    // Today's session is already saved (planned, or trained on a rest day): show it and offer a redo.
+    const T = TPL[doneTpl], mine = todays.filter((x) => x.tpl === doneTpl);
     hero = `<section class="card hero done"><div class="spread"><span class="eyebrow">Today · ${DAYS_LONG[now.getDay()]} ${now.getDate()} ${MONTHS[now.getMonth()]}</span><span class="chip good">Done ✓</span></div>
       <h2>${esc(T.name)}</h2>
       <div class="list">${mine.map((x) => `<div class="li"><div><div class="t">${esc(x.title)} · ${new Date(x.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div><div class="s num">${esc(sessSummary(x))}</div></div>
         <div class="row nowrap"><button class="btn sm" data-act="edit" data-id="${esc(x.id)}">Edit</button><button class="btn sm danger" data-act="delsess" data-id="${esc(x.id)}" aria-label="Delete this session">Delete</button></div></div>`).join('')}</div>
       ${mine.length > 1 ? '<p class="small muted">Saved twice today. Delete the one that was a mistake; both count until you do.</p>' : '<p class="small muted">Nice work. Recovery starts now: eat, drink water, sleep.</p>'}
-      <button class="btn wide" data-act="start" data-id="${tid}">Redo this workout</button>
+      <button class="btn wide" data-act="start" data-id="${doneTpl}">Redo this workout</button>
       <p class="small muted">A redo is saved as a second session, so nothing is lost if the first one was logged wrong.</p></section>`;
   } else if (tid) {
     const T = TPL[tid]; const pl = M.planSession(tid, M.ctxFor(tid));
@@ -103,6 +104,7 @@ export function viewTrain(M, ui) {
       <div class="s num">${fmtDate(s.date)}${s.pending ? ' · <b class="warn">needs details</b>' : ''}${s.mode === 'quick' ? ' · quick log' : ''} · ${esc(sessSummary(s))}${s.post && s.post.rpe ? ` · effort ${s.post.rpe}/10` : ''}</div>
       ${open ? `<div class="stack small detail">${(s.items || []).filter((i) => i.sec === 'main').map((i) => `<div><b>${esc(EX[i.x] ? EX[i.x].n : i.x)}</b> <span class="muted num">${(i.sets || []).filter((z) => +z.r > 0).map((z) => u(i.x, z.r) + (+z.kg ? ` @${z.kg}` : '') + (z.rir != null && z.rir !== '' ? ` (${z.rir} left)` : '')).join(' · ')}</span></div>`).join('')}
         ${g && g.km ? `<div class="muted num">${g.km.toFixed(2)} km${g.pace ? ` · ${fmtPace(g.pace)} /km avg` : ''}${g.splits && g.splits.length ? ` · splits ${g.splits.map(fmtPace).join(', ')}` : ''}</div>${routeSVG(g.route, 110)}` : ''}
+        ${s.mode === 'live' ? `<div class="muted">Started ${new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${s.dur ? ` · ${Math.round(s.dur / 60)} min` : ''}${s.fasted ? ' · fasting' : ''}</div>` : s.fasted ? '<div class="muted">Fasting day</div>' : ''}
         ${s.ready && s.ready.score ? `<div class="muted">Readiness ${s.ready.score.toFixed(1)}/5</div>` : ''}${s.post && s.post.notes ? `<div class="muted">“${esc(s.post.notes)}”</div>` : ''}
         <div class="row"><button class="btn sm" data-act="edit" data-id="${esc(s.id)}">Edit</button><button class="btn sm danger" data-act="delsess" data-id="${esc(s.id)}">Delete</button></div></div>` : ''}</div><span class="dot ${s.kind === 'free' ? 'run' : s.kind}"></span></div>`;
   }
@@ -126,6 +128,8 @@ export function viewStart(M, ui) {
   <section class="card"><div class="spread"><h3>Readiness check</h3><span class="small muted">15 seconds · optional</span></div>
     <div class="stack">${row('sleep', 'Sleep last night', '1 bad · 5 great')}${row('energy', 'Energy', '1 drained · 5 fresh')}${row('sore', 'Muscle soreness', '1 none · 5 very sore')}${row('stress', 'Stress', '1 calm · 5 high')}</div>
     <div class="grid2"><button class="toggle ${c.sh ? 'on' : ''}" data-act="flag" data-v="sh" aria-pressed="${c.sh}">Shoulder discomfort</button><button class="toggle ${c.kn ? 'on' : ''}" data-act="flag" data-v="kn" aria-pressed="${c.kn}">Knee discomfort</button></div>
+    <button class="toggle ${c.fasted ? 'on' : ''}" data-act="flag" data-v="fasted" aria-pressed="${!!c.fasted}">Fasting today</button>
+    ${c.fasted ? '<p class="small muted">Logged as a fasting day so you can compare later. Best after iftar (about 1.5–2 h after eating); before iftar keep it easy and skip the run.</p>' : ''}
     ${zone ? `<div class="note ${zt[zone][0]}"><b>Readiness ${c.rd.score.toFixed(1)}/5</b><span class="small">${zt[zone][1]}</span></div>` : ''}
     ${c.sh ? '<p class="small muted">Shoulder flag: dips and pike push-ups become push-ups, no added weight on pulling or pushing today.</p>' : ''}${c.kn ? '<p class="small muted">Knee flag: split squats, step-ups and box squats are removed; the run becomes a brisk walk.</p>' : ''}</section>
   <section class="card"><div class="spread"><h3>Today's plan</h3><div class="seg"><button class="${c.short ? '' : 'on'}" data-act="short" data-v="0" aria-pressed="${!c.short}">Full · 60 min</button><button class="${c.short ? 'on' : ''}" data-act="short" data-v="1" aria-pressed="${c.short}">Short · 30 min</button></div></div>
@@ -359,6 +363,11 @@ export function viewProgress(M, ui) {
   const prs = Object.entries(best).map(([x, b]) => `<tr><td>${esc(EX[x].n)}</td><td class="r">${u(x, b.r)}${b.kg ? ` @ +${b.kg} kg` : ''}</td><td class="r muted">${fmtShort(b.d)}</td></tr>`).join('');
   const rep = M.weeklyReport(ui.reportOffset);
   const lastRun = M.real.find((s) => s.run && s.run.gps && s.run.gps.route && s.run.gps.route.length > 1);
+  const TT = M.trainingTimes();
+  const ttCard = `<section class="card"><h3>When you train best</h3>
+    <p class="small muted">Reps done as a share of the plan on your main lifts (100% = hit every target), from sessions logged live.</p>
+    ${TT.total < 3 ? `<p class="small">Needs a few more live sessions (${TT.total} so far). Keep doing the readiness check: it is what this compares.</p>` : `<div class="tt"><div class="tth"><span></span><span>Sessions</span><span>Of plan</span><span>Readiness</span><span>Minutes</span></div>${TT.groups.map(([l, g]) => `<div class="ttr ${g.n ? '' : 'muted'}"><span>${l}</span><span class="num">${g.n}</span><span class="num"><b>${g.hit != null ? Math.round(g.hit) + '%' : '–'}</b></span><span class="num">${g.ready != null ? g.ready.toFixed(1) : '–'}</span><span class="num">${g.dur != null ? Math.round(g.dur) : '–'}</span></div>`).join('')}</div>
+    <p class="small muted">Compare groups with at least 3 sessions each; one bad day moves small groups a lot. The full log with start times is in Training log.csv on Drive.</p>`}</section>`;
   return `<div class="grid3"><div class="tile"><b>${ph.week || 0}</b><span>Program week</span></div><div class="tile"><b>${ws.slice(-4).reduce((a, w) => a + w.count, 0)}</b><span>Sessions, 4 weeks</span></div><div class="tile"><b>${M.bwAt(Date.now())}</b><span>Bodyweight, kg</span></div></div>
   <section class="card"><div class="spread"><h3>Weekly report</h3><div class="seg"><button class="${ui.reportOffset === 1 ? 'on' : ''}" data-act="repoff" data-v="1">Last week</button><button class="${ui.reportOffset === 0 ? 'on' : ''}" data-act="repoff" data-v="0">This week</button></div></div>
     <pre class="report" id="reportText">${esc(rep.text)}</pre>
@@ -379,6 +388,7 @@ export function viewProgress(M, ui) {
     ${kmPts.length >= 2 ? `<span class="lbl">Average pace from GPS (up is faster)</span>${lineChart({ series: [{ pts: kmPts, color: 'var(--track)' }], fmt: fmtPace, invert: true, label: 'Pace' })}` : ''}
     ${lastRun ? `<span class="lbl">Last tracked route · ${fmtDate(lastRun.date)} · ${lastRun.run.gps.km.toFixed(2)} km</span>${routeSVG(lastRun.run.gps.route)}` : ''}</section>
   <section class="card"><h3>Readiness</h3>${lineChart({ series: [{ pts: rdPts, color: 'var(--warn)' }], fmt: (v) => v.toFixed(1), label: 'Readiness', empty: 'Fill in the readiness check before sessions to see this.' })}</section>
+  ${ttCard}
   <section class="card"><div class="spread"><h3>Consistency</h3><div class="legend"><span><i style="background:var(--bar)"></i>Strength</span><span><i style="background:var(--track)"></i>Run</span><span><i style="background:var(--warn)"></i>Test</span></div></div>${heatmap(M.real, M.weekStartOf, M.P.weekStart)}</section>
   <section class="card"><h3>Tests</h3>${tests ? `<div class="scroll"><table class="tbl"><thead><tr><th>Date</th>${TESTS.map(([, l]) => `<th class="r">${l}</th>`).join('')}<th class="r">Run min</th></tr></thead><tbody>${tests}</tbody></table></div>` : '<p class="empty">No tests yet.</p>'}</section>
   <section class="card"><h3>Best sets</h3>${prs ? `<div class="scroll"><table class="tbl"><thead><tr><th>Exercise</th><th class="r">Best</th><th class="r">Date</th></tr></thead><tbody>${prs}</tbody></table></div>` : '<p class="empty">Your best sets show here after your first sessions.</p>'}</section>`;
@@ -404,6 +414,7 @@ export function viewPlan(M, ui) {
     ${canSpeak() ? '<button class="btn sm ghost" data-act="voicetest">Test the voice</button>' : '<p class="small muted">This browser has no speech voice.</p>'}</div>
     <p class="small muted">Saved on this device only.</p></section>
   <section class="card"><h3>Weekly schedule</h3><div class="stack">${sched}</div>
+    <span class="lbl">Fasting days <span class="muted">(sessions on these days are tagged, to compare later)</span></span><div class="chips" style="--n:7">${[6, 0, 1, 2, 3, 4, 5].map((d) => { const on = (M.P.fastDays || []).includes(d); return `<button type="button" class="${on ? 'on' : ''}" data-act="fastday" data-v="${d}" aria-pressed="${on}">${DAYS_LONG[d].slice(0, 3)}</button>`; }).join('')}</div>
     ${warn.length ? warn.map((w) => `<div class="note warn"><span class="small">${esc(w)}</span></div>`).join('') : '<p class="small muted">Three strength days with a day between upper sessions, plus the optional run day.</p>'}
     <details class="how" data-key="why-split"><summary>Why this split</summary><ul>${PROGRAM_TPLS.map((k) => `<li><b>${esc(TPL[k].name)}:</b> ${esc(TPL[k].why)}</li>`).join('')}<li>Upper body twice a week (best for growth); legs once heavy plus running, which is kinder to the knee.</li><li>On a 3-day week, skip the run day: the upper days already end with a run-walk finisher.</li></ul></details></section>
   <section class="card"><h3>Reminders</h3><p class="small muted">Reminders come from your phone's calendar, so they work even when the app is closed.</p>

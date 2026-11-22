@@ -7,7 +7,7 @@ export const READY = { green: 3.5, yellow: 2.5 };
 export function defaultProfile(now = Date.now()) {
   return {
     age: 21, height: 178, restHR: 65, restMain: 150, restAcc: 75, weekStart: 6,
-    plan: { 6: 'A', 1: 'B', 3: 'C', 5: 'D' }, variant: {}, programStart: null, restartedAt: null, deloadWeeks: [],
+    plan: { 6: 'A', 1: 'B', 3: 'C', 5: 'D' }, fastDays: [6, 1, 4], variant: {}, programStart: null, restartedAt: null, deloadWeeks: [],
     trainTime: '18:00', morningTime: '08:00', updatedAt: 0, _ts: {}
   };
 }
@@ -200,7 +200,9 @@ export function createModel(state, now = Date.now()) {
     for (const [x, key] of T.tests) items.push({ x, sec: 'test', testKey: key, sets: 1, targets: [last[key] || EX[x].lo], load: 0, status: '', rir: 0, warm: [], last: last[key] || null });
     return { items, run: { alt: 'test', full: false, lvl: 0, phases: null, desc: 'Easy talking pace on the track. Stop when you would need to walk, or at 20 minutes', why: '' } };
   }
-  const ctxFor = (tid, extra = {}) => ({ tpl: tid, phase: phaseInfo(), zone: 'green', short: false, sh: false, kn: false, rd: null, ...extra });
+  const ctxFor = (tid, extra = {}) => ({ tpl: tid, phase: phaseInfo(), zone: 'green', short: false, sh: false, kn: false, rd: null, fasted: isFastDay(now), ...extra });
+  /** Days the user fasts (from Plan): sessions on them are tagged so time-of-day and fasting can be compared. */
+  function isFastDay(t) { return (P.fastDays || []).includes(new Date(t).getDay()); }
 
   function weekStartOf(t) { const x = new Date(t); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() - P.weekStart + 7) % 7)); return x; }
   function weeks(n) {
@@ -347,8 +349,34 @@ export function createModel(state, now = Date.now()) {
     return { start, end, count: w.count, days: w.days.size, planned, text: lines.join('\n') };
   }
 
+  /** How well sessions went (reps done as a % of the planned reps on the main lifts) grouped by time of day,
+   *  fasting and readiness, from live-logged sessions only (their start time and effort are real). */
+  function trainingTimes() {
+    const rows = [];
+    for (const s of real) {
+      if (s.mode !== 'live' || s.kind === 'test') continue;
+      let done = 0, plan = 0;
+      for (const it of s.items || []) {
+        if (it.sec !== 'main' || !it.plan || !it.plan.targets) continue;
+        it.sets.forEach((z, j) => { const t = it.plan.targets[j] ?? it.plan.targets[it.plan.targets.length - 1]; if (t > 0) { done += Math.min(+z.r || 0, t * 2); plan += t; } });
+      }
+      if (!plan) continue;
+      const h = new Date(s.date).getHours();
+      rows.push({ hit: (done / plan) * 100, tod: h < 8 ? 'early' : h < 16 ? 'day' : 'evening', fasted: !!s.fasted, ready: s.ready && s.ready.score ? s.ready.score : null, dur: s.dur ? s.dur / 60 : null });
+    }
+    const agg = (f) => { const g = rows.filter(f); const avg = (k) => { const v = g.map((r) => r[k]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; }; return { n: g.length, hit: avg('hit'), ready: avg('ready'), dur: avg('dur') }; };
+    return {
+      total: rows.length,
+      groups: [
+        ['Early (before 8:00)', agg((r) => r.tod === 'early')], ['Daytime (8:00–16:00)', agg((r) => r.tod === 'day')], ['Evening (after 16:00)', agg((r) => r.tod === 'evening')],
+        ['Fasting days', agg((r) => r.fasted)], ['Non-fasting days', agg((r) => !r.fasted)],
+        ['Readiness 4+', agg((r) => r.ready >= 4)], ['Readiness under 3', agg((r) => r.ready != null && r.ready < 3)]
+      ]
+    };
+  }
+
   return {
-    P, programStart, sessions, real, pending, weighins, prehab, tests, vx, bwAt, lastTest, testMax, phaseInfo, histOf, presc, runLevel,
-    planSession, planTest, ctxFor, weekStartOf, weeks, plannedDays, streak, e1rm, banister, fatigueSignal, coachNotes, weeklyReport, sessLoad
+    P, programStart, sessions, real, trainingTimes, pending, weighins, prehab, tests, vx, bwAt, lastTest, testMax, phaseInfo, histOf, presc, runLevel,
+    planSession, planTest, ctxFor, isFastDay, weekStartOf, weeks, plannedDays, streak, e1rm, banister, fatigueSignal, coachNotes, weeklyReport, sessLoad
   };
 }

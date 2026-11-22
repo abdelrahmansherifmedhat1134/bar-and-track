@@ -1,6 +1,7 @@
 package io.github.abdelrahmansherifmedhat1134.barandtrack;
 
 import android.content.Intent;
+import android.os.Bundle;
 import android.util.Log;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
@@ -15,6 +16,12 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
  * SocialLogin plugin, which is what onActivityResult does here.
  */
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(RunControlsPlugin.class); // lock-screen pause/skip and countdown, see RunControlsPlugin
+        super.onCreate(savedInstanceState);
+    }
 
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
