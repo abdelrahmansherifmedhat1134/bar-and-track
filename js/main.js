@@ -488,6 +488,7 @@ document.addEventListener('click', (e) => {
     case 'holdcancel': ui.hold = null; if (L) { L.hold = null; store.quiet(); } sheetHTML = null; renderSheet(); break;
     case 'voicetest': speak('Pull-ups, set 1 of 3. 8 reps.', true); break;
     case 'locsettings': native.openLocationSettings(); break;
+    case 'diag': native.diagnose().then((r) => { ui.diag = r; render(); }); break;
     case 'fastday': { const v = +d.v, cur = store.state.profile.fastDays || []; store.updateProfile({ fastDays: cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v].sort() }); break; }
     case 'rir': { const r = L.items[+d.i].rows[+d.j]; r.rir = +d.v; ui.rirAsk = null; saveLive(); break; }
     case 'riredit': ui.rirAsk = { i: +d.i, j: +d.j }; render(); break;
@@ -571,6 +572,7 @@ document.addEventListener('click', (e) => {
     case 'restart': arm(b, () => { store.updateProfile({ programStart: null, restartedAt: dayKey(Date.now()), deloadWeeks: [] }); toast('Program reset. Do a test day to start again.'); go('today'); }); break;
     case 'sync': {
       if (!drive.isConfigured()) { go('plan'); break; }
+      if (native.isApp && !drive.hasValidToken()) toast('Opening Google sign-in…');
       drive.sync({ interactive: true }).then((m) => { if (m) toast(m.localChanged ? 'Synced. Data from your other device was merged in.' : 'Synced with Google Drive.'); else if (drive.status.message) toast(drive.status.message); });
       break;
     }

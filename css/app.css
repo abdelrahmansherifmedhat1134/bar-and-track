@@ -257,3 +257,5 @@ svg.chart .lbl { fill: var(--ink); font-size: 13px; font-weight: 600; font-famil
 .tth, .ttr { display: grid; grid-template-columns: 1.9fr .9fr .9fr .9fr .9fr; gap: 6px; padding: 7px 0; border-bottom: 1px solid var(--line); align-items: center; }
 .tth { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .tth span:not(:first-child), .ttr span:not(:first-child) { text-align: right; }
+
+.diag { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); padding: 8px; border-radius: 8px; max-height: 220px; overflow: auto; }

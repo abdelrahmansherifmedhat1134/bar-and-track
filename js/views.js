@@ -437,7 +437,8 @@ export function viewPlan(M, ui) {
   <section class="card"><h3>Guides</h3><a class="btn" href="#guide">Belt safety, technique, knee and shoulder rules</a></section>
   ${isApp ? `<section class="card"><h3>Android app</h3><p class="small">Runs keep going with the screen off: GPS keeps tracking and every run/walk switch arrives as a notification with sound and vibration, even with music playing.</p>
     <p class="small muted">For distance with the screen off, set Location for Bar &amp; Track to <b>Allow all the time</b> in Android settings, and allow notifications. The app updates itself with the website.</p>
-    <button class="btn sm" data-act="locsettings">Open location settings</button></section>`
+    <div class="row"><button class="btn sm" data-act="locsettings">Open location settings</button><button class="btn sm ghost" data-act="diag">App check</button></div>
+    ${ui.diag ? `<pre class="small diag">${esc(JSON.stringify(ui.diag, null, 1))}</pre>` : ''}${drive.status.message && drive.status.state !== 'ok' ? `<p class="small muted">Drive: ${esc(drive.status.message)}</p>` : ''}</section>`
     : /Android/i.test(navigator.userAgent) ? `<section class="card"><h3>Get the Android app</h3><p class="small">The website pauses when your screen locks. The Android app keeps runs going with the screen off (GPS, run/walk alerts, voice) and stays in sync with this site through Google Drive.</p>
     <a class="btn primary" href="https://github.com/abdelrahmansherifmedhat1134/bar-and-track/releases/latest/download/bar-and-track.apk" rel="noopener">Download the app (APK)</a>
     <p class="small muted">Android will ask you to allow installs from your browser once. After installing, open it, tap Sync to connect the same Google account, and your data comes across.</p></section>` : ''}

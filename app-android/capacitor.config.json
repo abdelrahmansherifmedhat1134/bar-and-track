@@ -8,11 +8,17 @@
   },
   "android": {
     "useLegacyBridge": true,
-    "backgroundColor": "#f2f4f5"
+    "backgroundColor": "#f2f4f5",
+    "webContentsDebuggingEnabled": true
   },
   "plugins": {
     "SocialLogin": {
-      "providers": { "google": true, "facebook": false, "apple": false, "twitter": false },
+      "providers": {
+        "google": true,
+        "facebook": false,
+        "apple": false,
+        "twitter": false
+      },
       "logLevel": 1
     },
     "LocalNotifications": {

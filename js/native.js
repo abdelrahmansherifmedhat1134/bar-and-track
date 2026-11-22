@@ -17,6 +17,8 @@ async function plugin(name) {
   const core = await corePromise;
   return plugins[name] || (plugins[name] = core.registerPlugin(name));
 }
+/** Reject if a native call hasn't answered in `ms` (a hung call must never look like "nothing happened"). */
+const timeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} did not respond.`)), ms))]);
 const safe = async (fn, fallback = null) => { try { return await fn(); } catch (e) { console.warn('[native]', e && e.message ? e.message : e); return fallback; } };
 
 /* ---------- background GPS ---------- */
@@ -80,9 +82,9 @@ export async function speakNative(text) {
 let loginInit = null;
 export async function googleAccessToken(clientId, scope, interactive) {
   const SL = await plugin('SocialLogin'); if (!SL) throw new Error('Google sign-in is not available.');
-  if (!loginInit) loginInit = SL.initialize({ google: { webClientId: clientId, mode: 'online' } }).catch((e) => { loginInit = null; throw e; });
+  if (!loginInit) loginInit = timeout(SL.initialize({ google: { webClientId: clientId, mode: 'online' } }), 15000, 'Google sign-in setup').catch((e) => { loginInit = null; throw e; });
   await loginInit;
-  const res = await SL.login({ provider: 'google', options: { scopes: [scope], style: interactive ? 'standard' : 'bottom', filterByAuthorizedAccounts: !interactive } });
+  const res = await timeout(SL.login({ provider: 'google', options: { scopes: [scope], style: interactive ? 'standard' : 'bottom', filterByAuthorizedAccounts: !interactive } }), 120000, 'Google sign-in');
   const tok = res && res.result && res.result.accessToken;
   if (!tok || !tok.token) throw new Error('Google did not give Drive access. Tap Sync and allow Google Drive.');
   const exp = tok.expires ? Date.parse(tok.expires) : NaN;
@@ -100,4 +102,12 @@ export async function setControls(state, onAction) {
   if (sig === controlsSig) return;
   controlsSig = sig;
   if (state) await safe(() => RC.show(state)); else await safe(() => RC.hide());
+}
+
+/** What the app can reach natively; shown in Plan so a problem can be reported precisely. */
+export async function diagnose() {
+  const C = window.Capacitor || {};
+  const out = { isApp, native: !!(C.isNativePlatform && C.isNativePlatform()), platform: C.getPlatform ? C.getPlatform() : 'web', plugins: (C.PluginHeaders || []).map((h) => h.name).sort() };
+  try { await plugin('LocalNotifications'); out.core = 'ok'; } catch (e) { out.core = 'error: ' + (e && e.message); }
+  return out;
 }
