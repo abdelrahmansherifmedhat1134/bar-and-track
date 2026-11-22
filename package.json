@@ -1,6 +1,6 @@
 {
   "name": "bar-and-track",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "Personal calisthenics + running training app (offline-first PWA with Google Drive sync).",
   "type": "module",

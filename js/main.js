@@ -295,11 +295,12 @@ function tickTimer() {
   if (gps.track && Date.now() - lastSnap > 10000) { lastSnap = Date.now(); L.run.gpsSnap = gps.snapshot(); store.quiet(); }
 }
 setInterval(() => {
+  if (!store.local) return; // still loading
   tickRest(); tickTimer(); tickHold(); syncControls();
   const L = store.local.live;
   if (L) document.querySelectorAll('[data-elapsed]').forEach((el) => { const v = fmtDur((Date.now() - L.start) / 1000); if (el.textContent !== v) el.textContent = v; });
 }, 250);
-document.addEventListener('visibilitychange', () => { syncCues(); syncRestCues(); if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
+document.addEventListener('visibilitychange', () => { if (!store.local) return; syncCues(); syncRestCues(); if (!document.hidden) { tickRest(); tickTimer(); autoSyncIfStale(); } });
 
 /* ---------------- sessions ---------------- */
 function newSessionFromPlan(mode) {

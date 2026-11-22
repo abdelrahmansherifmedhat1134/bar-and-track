@@ -114,7 +114,14 @@ async function main() {
   const t0 = await js(`const L = JSON.parse(localStorage.getItem('bt:live')).live; return { running: L.timer && L.timer.running, mode: L.timer && L.timer.mode, idx: L.timer && L.timer.idx, gpsOn: L.run.gpsOn };`);
   step('run timer started', t0 && t0.running === true && t0.mode === 'phases', { ...t0, gpsToggle: gpsOn });
 
-  adb('shell input keyevent KEYCODE_HOME'); await sleep(4000);
+  let lat = 30.0444, lon = 31.2357;
+  const walk = async (n) => { for (let i = 0; i < n; i++) { lon += 0.0002; lat += 0.00005; adb(`emu geo fix ${lon.toFixed(5)} ${lat.toFixed(5)}`); await sleep(2500); } };
+  const gpsNow = () => js(`const g = await import('./js/sensors.js'); return g.gps.track ? { fixes: g.gps.track.accepted, dist_m: Math.round(g.gps.track.dist), state: g.gps.state } : { state: g.gps.state };`);
+  await walk(4); const gA = await gpsNow();
+  step('GPS in the foreground', !!(gA && gA.fixes > 2), gA);
+  adb('shell input keyevent KEYCODE_HOME'); await sleep(3000);
+  await walk(4); const gB = await gpsNow();
+  step('GPS with the app in the background', !!(gB && gA && gB.fixes > gA.fixes + 1), gB);
   const n1 = notifications();
   const ctl = /Run[- ]?walk|Run ·|Walk ·|part \d+\/\d+/i.test(n1) && /Pause/.test(n1);
   step('lock-screen run controls posted', ctl, (n1.match(/run_controls[\s\S]{0,600}/) || [''])[0].slice(0, 600));
@@ -123,8 +130,8 @@ async function main() {
   step('run/walk cues scheduled as alarms', alarms > 0, { alarmLines: alarms });
 
   // screen off, walk ~250 m in small GPS steps
-  adb('shell input keyevent KEYCODE_SLEEP');
-  for (let i = 1; i <= 12; i++) { adb(`emu geo fix ${(31.2357 + i * 0.0002).toFixed(5)} ${(30.0444 + i * 0.00005).toFixed(5)}`); await sleep(2500); }
+  adb('shell input keyevent KEYCODE_SLEEP'); await sleep(2000);
+  await walk(6);
   wake(); await sleep(1500);
   shot('lockscreen-or-home');
 
@@ -134,7 +141,7 @@ async function main() {
   adb('shell cmd statusbar collapse'); toFront(); await sleep(2500);
   const t1 = await js(`const L = JSON.parse(localStorage.getItem('bt:live')).live; const g = await import('./js/sensors.js'); const s = g.gps.snapshot ? g.gps.snapshot() : null; return { running: L.timer && L.timer.running, idx: L.timer && L.timer.idx, dist_m: g.gps.track ? Math.round(g.gps.track.dist) : (s && s.dist), fixes: g.gps.track ? g.gps.track.accepted : null, rejected: g.gps.track ? g.gps.track.rejected : null, state: g.gps.state, err: g.gps.error };`);
   step('Pause button on the notification works', tapped && t1 && t1.running === false, { tapped, ...t1 });
-  step('GPS tracked while the screen was off', !!(t1 && (t1.dist_m > 50 || t1.fixes > 3)), t1);
+  step('GPS with the screen off', !!(t1 && gB && t1.fixes > (gB.fixes || 0) + 2), { before: gB, after: t1 });
   shot('back-in-app');
 
   // finish
